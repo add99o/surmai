@@ -10,6 +10,7 @@ import dayjs from 'dayjs';
 import { useSurmaiContext } from '../../app/useSurmaiContext.ts';
 import { Header } from '../../components/nav/Header.tsx';
 import { TripAttachments } from '../../components/trip/attachments/TripAttachments.tsx';
+import { TripAssistant } from '../../components/trip/assistant/TripAssistant.tsx';
 import { ExpensesPanel } from '../../components/trip/expenses/ExpensesPanel.tsx';
 import { ItineraryView } from '../../components/trip/itinerary/ItineraryView.tsx';
 import { TripNotes } from '../../components/trip/notes/TripNotes.tsx';
@@ -85,7 +86,6 @@ export const ViewTrip = () => {
       key: 'organization',
       value: t('organization', 'Organization'),
     },
-
     {
       key: 'itinerary',
       value: t('itinerary', 'Itinerary'),
@@ -101,6 +101,10 @@ export const ViewTrip = () => {
     {
       key: 'notes',
       value: t('notes', 'Notes'),
+    },
+    {
+      key: 'assistant',
+      value: t('assistant_tab', 'AI Assistant'),
     },
   ];
 
@@ -185,7 +189,11 @@ export const ViewTrip = () => {
         </Alert>
       )}
 
-      <Tabs value={activeTab} onChange={(tabValue) => setActiveTab(tabValue || 'organization')} keepMounted={false}>
+      <Tabs
+        value={activeTab}
+        onChange={(tabValue) => setActiveTab(tabValue || 'organization')}
+        keepMounted={false}
+      >
         <TabsList tabs={tabs} changeTabFn={setActiveTab} activeTab={activeTab} />
         <Tabs.Panel value="organization">
           <OrganizationTab
@@ -220,6 +228,11 @@ export const ViewTrip = () => {
         <Tabs.Panel value="notes">
           <TripNotes refetch={refetchTrip} trip={trip} />
         </Tabs.Panel>
+        {trip && (
+          <Tabs.Panel value="assistant">
+            <TripAssistant trip={trip} />
+          </Tabs.Panel>
+        )}
       </Tabs>
     </Container>
   );
