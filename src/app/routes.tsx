@@ -11,6 +11,7 @@ import { MyTrips } from '../pages/trips/MyTrips.tsx';
 // import { Settings } from '../pages/Settings/Settings.tsx';
 import { TripsContainer } from '../pages/trips/TripsContainer.tsx';
 import { ViewTrip } from '../pages/trips/ViewTrip.tsx';
+import { AIIterary } from '../pages/trips/AIIterary.tsx';
 import { UserProfile } from '../pages/UserProfile/UserProfile.tsx';
 
 const Settings = lazy(() => import('../pages/Settings/Settings.tsx'));
@@ -48,6 +49,7 @@ export const buildRouter = () => {
             { path: '', element: <MyTrips /> },
             { path: '/trips/create', element: <CreateNewTrip /> },
             { path: ':tripId', element: <ViewTrip /> },
+            { path: ':tripId/ai-itinerary', element: <AIIterary /> },
           ],
         },
         { path: '*', element: <p>Child Not Found</p> },

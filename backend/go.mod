@@ -1,11 +1,12 @@
 module backend
 
-go 1.24.0
+go 1.24.1
 
 toolchain go1.24.9
 
 require (
 	github.com/arran4/golang-ical v0.3.2
+	github.com/gosticks/openai-responses-api-go v0.0.4
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pocketbase/dbx v1.11.0
 	github.com/pocketbase/pocketbase v0.30.4
