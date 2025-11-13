@@ -5,7 +5,8 @@ import (
 	"backend/trips"
 	"context"
 	"encoding/json"
-	openai "github.com/gosticks/openai-responses-api-go"
+	"github.com/gosticks/openai-responses-api-go/client"
+	openairesponses "github.com/gosticks/openai-responses-api-go"
 	"github.com/pocketbase/pocketbase/core"
 	"net/http"
 	"os"
@@ -68,12 +69,12 @@ func GetAIIterary(e *core.RequestEvent) error {
 		return err
 	}
 
-	client := openai.NewClient(os.Getenv("OPENAI_API_KEY"))
-	resp, err := client.CreateResponse(
+	c := client.NewClient(os.Getenv("OPENAI_API_KEY"))
+	resp, err := c.Responses.Create(
 		context.Background(),
-		openai.ResponseRequest{
+		openairesponses.ResponseRequest{
 			Model: "gpt-5-mini",
-			Messages: []openai.ResponseMessage{
+			Messages: []openairesponses.ResponseInputMessage{
 				{
 					Role:    "user",
 					Content: string(tripDataBytes),
