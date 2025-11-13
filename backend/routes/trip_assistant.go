@@ -448,8 +448,8 @@ func buildResponsesInput(messages []assistantMessage, ctx *tripAssistantContext)
 	contextPrompt := fmt.Sprintf("Latest trip context:\n%s", string(ctxJSON))
 
 	input := []map[string]interface{}{
-		newResponsesTextBlock("system", systemPrompt),
-		newResponsesTextBlock("system", contextPrompt),
+		newResponsesTextBlock("developer", systemPrompt),
+		newResponsesTextBlock("developer", contextPrompt),
 	}
 
 	for _, message := range truncateConversation(messages, 20) {
