@@ -474,11 +474,16 @@ func truncateConversation(messages []assistantMessage, limit int) []assistantMes
 }
 
 func newResponsesTextBlock(role, text string) map[string]interface{} {
+	contentType := "input_text"
+	if role == "assistant" {
+		contentType = "output_text"
+	}
+
 	return map[string]interface{}{
 		"role": role,
 		"content": []map[string]string{
 			{
-				"type": "input_text",
+				"type": contentType,
 				"text": text,
 			},
 		},
@@ -487,8 +492,14 @@ func newResponsesTextBlock(role, text string) map[string]interface{} {
 
 func invokeResponsesAPI(ctx context.Context, apiKey string, input []map[string]interface{}) (string, error) {
 	payload := map[string]interface{}{
-		"model":       openAIModel,
-		"input":       input,
+		"model": openAIModel,
+		"input": input,
+		"reasoning": map[string]string{
+			"effort": "minimal",
+		},
+		"text": map[string]string{
+			"verbosity": "low",
+		},
 	}
 
 	body, err := json.Marshal(payload)
