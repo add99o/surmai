@@ -13,6 +13,7 @@ import { ExpensesPanel } from '../../components/trip/expenses/ExpensesPanel.tsx'
 import { ItineraryView } from '../../components/trip/itinerary/ItineraryView.tsx';
 import { TripNotes } from '../../components/trip/notes/TripNotes.tsx';
 import { OrganizationTab } from '../../components/trip/OrganizationTab.tsx';
+import { AIIteraryTab } from '../../components/trip/ai/AIIteraryTab.tsx';
 import { getTrip, getTripAttachments, listExpenses } from '../../lib/api';
 import { usePageTitle } from '../../lib/hooks/usePageTitle.ts';
 import { formatDate } from '../../lib/time.ts';
@@ -150,6 +151,7 @@ export const ViewTrip = () => {
           <Tabs.Tab value="attachments">{t('attachments', 'Attachments')}</Tabs.Tab>
           <Tabs.Tab value="expenses">{t('expenses', 'Expenses')}</Tabs.Tab>
           <Tabs.Tab value="notes">{t('notes', 'Notes')}</Tabs.Tab>
+          <Tabs.Tab value="ai-itinerary">{t('ai_itinerary', 'AI Itinerary')}</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="organization">
@@ -183,6 +185,9 @@ export const ViewTrip = () => {
         </Tabs.Panel>
         <Tabs.Panel value="notes">
           <TripNotes refetch={refetchTrip} trip={trip} />
+        </Tabs.Panel>
+        <Tabs.Panel value="ai-itinerary">
+          <AIIteraryTab />
         </Tabs.Panel>
       </Tabs>
     </Container>

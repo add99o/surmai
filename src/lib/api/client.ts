@@ -1,3 +1,3 @@
-import PocketBase from 'pocketbase';
+import { pb } from './pocketbase/pocketbase';
 
-export const apiClient = new PocketBase(import.meta.env.VITE_POCKETBASE_URL);
+export const apiClient = pb;
