@@ -1,32 +1,48 @@
+/* iOS-style Card */
 .card {
-  /*background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));*/
-  border: 1px solid var(--mantine-primary-color-light);
-  transition:
-    transform 150ms ease,
-    box-shadow 150ms ease;
+  background: var(--ios-surface-light);
+  border: none;
+  border-radius: var(--ios-radius-lg) !important;
+  box-shadow: var(--ios-shadow-sm);
+  transition: all var(--ios-transition-base);
+  overflow: hidden;
+  cursor: pointer;
+
+  @media (prefers-color-scheme: dark) {
+    background: var(--ios-surface-dark);
+  }
 
   &:hover {
-    transform: scale(1.01);
-    box-shadow: var(--mantine-shadow-lg);
-    cursor: pointer;
+    transform: translateY(-2px);
+    box-shadow: var(--ios-shadow-md);
+  }
+
+  &:active {
+    transform: translateY(0);
+    box-shadow: var(--ios-shadow-sm);
   }
 }
 
 .section {
-  border-bottom: rem(1px) solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
-  padding-left: var(--mantine-spacing-md);
-  padding-right: var(--mantine-spacing-md);
-  padding-bottom: var(--mantine-spacing-md);
+  border-bottom: 0.5px solid var(--ios-gray-3);
+  padding-left: 16px;
+  padding-right: 16px;
+  padding-bottom: 16px;
+
+  @media (prefers-color-scheme: dark) {
+    border-bottom-color: var(--ios-gray-8);
+  }
 }
 
 .like {
   color: var(--mantine-color-red-6);
-  width: rem(20px);
-  height: rem(20px);
+  width: 20px;
+  height: 20px;
 }
 
 .label {
   text-transform: uppercase;
   font-size: var(--mantine-font-size-xs);
-  font-weight: 700;
+  font-weight: 600;
+  letter-spacing: 0.5px;
 }

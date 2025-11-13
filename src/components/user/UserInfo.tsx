@@ -23,9 +23,9 @@ export const UserInfo = () => {
   });
 
   return (
-    <Menu position="bottom-end" withinPortal width={'xl'}>
+    <Menu position="bottom-end" withinPortal width={'xl'} shadow="lg">
       <Menu.Target>
-        <UnstyledButton>
+        <UnstyledButton className={classes.trigger}>
           <Group>
             <Avatar
               src={user?.avatar ? getAttachmentUrl(user, user.avatar) : null}
@@ -45,18 +45,25 @@ export const UserInfo = () => {
           </Group>
         </UnstyledButton>
       </Menu.Target>
-      <Menu.Dropdown>
+      <Menu.Dropdown className={classes.dropdown}>
         <Link to={'/profile'} className={classes.menuLink}>
-          <Menu.Item leftSection={<IconUser style={{ width: rem(16), height: rem(16) }} stroke={1.5} />}>
+          <Menu.Item
+            className={classes.menuItem}
+            leftSection={<IconUser style={{ width: rem(16), height: rem(16) }} stroke={1.5} />}
+          >
             {t('profile', 'Profile')}
           </Menu.Item>
         </Link>
         <Link to={'/invitations'} className={classes.menuLink}>
-          <Menu.Item leftSection={<IconPinInvoke style={{ width: rem(16), height: rem(16) }} stroke={1.5} />}>
+          <Menu.Item
+            className={classes.menuItem}
+            leftSection={<IconPinInvoke style={{ width: rem(16), height: rem(16) }} stroke={1.5} />}
+          >
             {t('invitations', 'Invitations')} {invitations && invitations.length > 0 ? ` (${invitations.length})` : ''}
           </Menu.Item>
         </Link>
         <Menu.Item
+          className={classes.menuItem}
           onClick={async () => {
             await logoutCurrentUser();
             navigate(0);
@@ -68,7 +75,7 @@ export const UserInfo = () => {
         {version && (
           <>
             <Menu.Divider />
-            <Menu.Item>
+            <Menu.Item className={classes.versionItem}>
               <Text size={'xs'} c={'dimmed'}>{`Version ${version.tag}${version.dirty ? '*' : ''}`}</Text>
             </Menu.Item>
           </>

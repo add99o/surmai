@@ -87,7 +87,7 @@ export const MyTrips = () => {
           {t('all_trips', 'All Trips')}
         </Text>
       </Header>
-      <Paper withBorder radius="md" p="xl" bg={'var(--mantine-color-body)'}>
+      <Paper withBorder={false} radius="lg" p="xl" bg={'var(--ios-surface-light)'}>
         <Group justify={'space-between'}>
           <div>
             {/*<TextInput name={'Search'} placeholder={'Search...'} leftSection={<IconSearch />} miw={'200'} />*/}
@@ -124,7 +124,7 @@ export const MyTrips = () => {
             loaderProps={{ type: 'bars' }}
           />
           {upcomingTrips && upcomingTrips.length === 0 && (
-            <Card mt={'md'} w={'100%'} bd={'1px dashed var(--mantine-primary-color-7)'} mih={150}>
+            <Card mt={'md'} w={'100%'} style={{ border: '1px dashed var(--ios-gray-4)' }} mih={150}>
               <Card.Section m={'auto'}>
                 <Box ta={'center'}>
                   <Text>{t('upcoming_trip_no_content', 'No upcoming trips.')}</Text>
@@ -165,7 +165,7 @@ export const MyTrips = () => {
           />
 
           {pastTrips && pastTrips.length === 0 && (
-            <Card mt={'md'} w={'100%'} bd={'1px dashed var(--mantine-primary-color-7)'} mih={150}>
+            <Card mt={'md'} w={'100%'} style={{ border: '1px dashed var(--ios-gray-4)' }} mih={150}>
               <Card.Section m={'auto'}>
                 <Box ta={'center'}>
                   <Text>{t('past_trip_no_content', 'No trips in the past year.')}</Text>

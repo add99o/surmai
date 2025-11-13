@@ -144,8 +144,8 @@ export const SignIn = () => {
         </Container>
       </Modal>
       <Container size={420} my={40}>
-        <Paper withBorder shadow="md" p={30} mt={30} radius="md" bg="var(--mantine-primary-color-light)">
-          <Text size="lg" ta="center" mt={5}>
+        <Paper withBorder={false} shadow="md" p={30} mt={30} radius="lg" bg="var(--ios-surface-light)">
+          <Text size="lg" ta="center" mt={5} fw={600}>
             {t('welcome_to_surmai', 'Welcome to Surmai')}
           </Text>
           {apiError && (

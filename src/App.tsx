@@ -1,10 +1,11 @@
-import { Alert, Anchor, AppShell, Box, Burger, Container, Group, rem, Text } from '@mantine/core';
+import { Alert, AppShell, Box, Burger, Container, Group, rem, Stack, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { ErrorBoundary } from 'react-error-boundary';
 import { useTranslation } from 'react-i18next';
 import { Outlet } from 'react-router-dom';
 
+import classes from './App.module.css';
 import { useSurmaiContext } from './app/useSurmaiContext.ts';
 import { Error } from './components/error/Error.tsx';
 import { Navbar } from './components/nav/Navbar.tsx';
@@ -28,9 +29,8 @@ function App() {
       }}
       layout={'alt'}
       padding="md"
-      bg={'var(--mantine-color-dark-light)'}
     >
-      <AppShell.Header>
+      <AppShell.Header className={classes.iosHeader}>
         <Container size={'xl'} h={'100%'} px={'md'}>
           <Group justify={'space-between'}>
             <Group justify={'flex-start'} align={'center'}>
@@ -43,7 +43,7 @@ function App() {
           </Group>
         </Container>
       </AppShell.Header>
-      <AppShell.Navbar>
+      <AppShell.Navbar className={classes.iosNavbar}>
         <Navbar
           close={() => {
             if (opened) {
@@ -52,34 +52,33 @@ function App() {
           }}
         />
       </AppShell.Navbar>
-      <AppShell.Main>
-        <ErrorBoundary FallbackComponent={Error}>
-          {demoMode && (
-            <Container size={'xl'}>
-              <Alert variant="light" title={t('demo_instance', 'Demo Instance')} icon={<IconInfoCircle />} mb="sm">
-                <Text>
-                  This is a demo instance which gets resets every hour. If you end up creating a trip that you would
-                  want to keep, please export it for your record.
-                </Text>
-              </Alert>
-            </Container>
-          )}
-          <Outlet />
-        </ErrorBoundary>
-      </AppShell.Main>
-      <AppShell.Footer>
-        <Container size={'xl'}>
-          <Group h={'xl'} justify={'flex-end'}>
-            <Anchor href={'https://surmai.app/documentation'} target={'_blank'}>
-              {t('documentation', 'Documentation')}
-            </Anchor>{' '}
-            |
-            <Anchor href={'https://surmai.app/documentation/about.html'} target={'_blank'}>
-              {t('about_surmai', 'About Surmai')}
-            </Anchor>
-          </Group>
+      <AppShell.Main className={classes.iosMain}>
+        <div className={classes.mainBackground} aria-hidden />
+        <Container size={'xl'} className={classes.pageContainer}>
+          <div className={classes.contentSurface}>
+            <ErrorBoundary FallbackComponent={Error}>
+              <Stack gap="lg">
+                {demoMode && (
+                  <Alert
+                    variant="light"
+                    title={t('demo_instance', 'Demo Instance')}
+                    icon={<IconInfoCircle />}
+                    className={classes.banner}
+                  >
+                    <Text c="dimmed" size="sm">
+                      This is a demo instance which gets resets every hour. If you end up creating a trip that you would
+                      want to keep, please export it for your record.
+                    </Text>
+                  </Alert>
+                )}
+                <Box className={classes.outletShell}>
+                  <Outlet />
+                </Box>
+              </Stack>
+            </ErrorBoundary>
+          </div>
         </Container>
-      </AppShell.Footer>
+      </AppShell.Main>
     </AppShell>
   );
 }

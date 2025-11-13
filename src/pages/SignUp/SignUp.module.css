@@ -1,4 +1,17 @@
+/* iOS-style SignUp page */
+.card {
+  border: none;
+  border-radius: var(--ios-radius-lg);
+  box-shadow: var(--ios-shadow-md);
+  background: var(--ios-surface-light);
+  transition: all var(--ios-transition-base);
+}
+
+[data-mantine-color-scheme='dark'] .card {
+  background: var(--ios-surface-dark);
+}
+
 .title {
-  font-family: Verdana, var(--mantine-font-family), serif;
-  font-weight: 900;
+  font-weight: 600;
+  font-size: 28px;
 }
