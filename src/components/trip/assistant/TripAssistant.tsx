@@ -9,6 +9,7 @@ import {
   Text,
   Textarea,
   rem,
+  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { IconAlertCircle, IconSend } from '@tabler/icons-react';
@@ -32,6 +33,7 @@ const MAX_PREVIEW_HEIGHT = 420;
 
 export const TripAssistant = ({ trip }: TripAssistantProps) => {
   const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
   const { t, i18n } = useTranslation();
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -160,10 +162,10 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
                   maxWidth: '90%',
                   backgroundColor:
                     message.role === 'assistant'
-                      ? theme.colorScheme === 'dark'
-                        ? theme.colors.dark[6]
-                        : theme.colors.gray[0]
-                      : theme.fn.rgba(theme.primaryColor, 0.15),
+                      ? colorScheme === 'dark'
+                        ? 'var(--mantine-color-dark-6)'
+                        : 'var(--mantine-color-gray-0)'
+                      : `var(--mantine-color-${theme.primaryColor}-1, var(--mantine-primary-color-1))`,
                 }}
               >
                 <Text size="xs" fw={600} c="dimmed">
