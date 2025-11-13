@@ -489,7 +489,6 @@ func invokeResponsesAPI(ctx context.Context, apiKey string, input []map[string]i
 	payload := map[string]interface{}{
 		"model":       openAIModel,
 		"input":       input,
-		"temperature": 0.2,
 	}
 
 	body, err := json.Marshal(payload)
