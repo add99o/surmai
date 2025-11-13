@@ -33,7 +33,7 @@ type openAIContent struct {
 }
 
 const (
-openAIInputTextType  = "text"
+openAIInputTextType  = "input_text"
 openAIOutputTextType = "output_text"
 )
 
