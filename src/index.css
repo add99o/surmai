@@ -165,14 +165,15 @@ html {
   padding: 12px 24px;
 }
 
+
 .mantine-Button-root[data-variant='filled'] {
-  background-color: var(--ios-blue) !important;
-  color: white !important;
+  background-color: var(--mantine-primary-color-filled) !important;
+  color: var(--mantine-color-white) !important;
   border: none !important;
 }
 
 .mantine-Button-root[data-variant='filled']:hover {
-  background-color: var(--ios-blue-dark) !important;
+  background-color: var(--mantine-primary-color-filled-hover) !important;
   transform: translateY(-1px);
   box-shadow: var(--ios-shadow-md);
 }
@@ -182,17 +183,25 @@ html {
   box-shadow: var(--ios-shadow-sm);
 }
 
-.mantine-Button-root[data-variant='light'],
-.mantine-Button-root[data-variant='outline'] {
-  border: 1px solid var(--ios-gray-4) !important;
-  background-color: transparent !important;
-  color: var(--ios-blue) !important;
+.mantine-Button-root[data-variant='light'] {
+  background-color: var(--mantine-primary-color-light) !important;
+  color: var(--mantine-primary-color-light-color) !important;
+  border: none !important;
 }
 
-.mantine-Button-root[data-variant='light']:hover,
+.mantine-Button-root[data-variant='light']:hover {
+  background-color: var(--mantine-primary-color-light-hover) !important;
+}
+
+.mantine-Button-root[data-variant='outline'] {
+  border: 1px solid var(--mantine-primary-color-light) !important;
+  background-color: transparent !important;
+  color: var(--mantine-primary-color-filled) !important;
+}
+
 .mantine-Button-root[data-variant='outline']:hover {
-  background-color: rgba(0, 122, 255, 0.1) !important;
-  border-color: var(--ios-blue) !important;
+  border-color: var(--mantine-primary-color-filled) !important;
+  background-color: var(--mantine-primary-color-light-hover) !important;
 }
 
 .mantine-Button-root[data-variant='subtle'],
