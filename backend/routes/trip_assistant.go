@@ -478,7 +478,7 @@ func newResponsesTextBlock(role, text string) map[string]interface{} {
 		"role": role,
 		"content": []map[string]string{
 			{
-				"type": "text",
+				"type": "input_text",
 				"text": text,
 			},
 		},
