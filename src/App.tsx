@@ -1,4 +1,4 @@
-import { Alert, Anchor, AppShell, Box, Burger, Container, Group, rem, Text } from '@mantine/core';
+import { Alert, AppShell, Box, Burger, Container, Group, rem, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { ErrorBoundary } from 'react-error-boundary';
