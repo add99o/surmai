@@ -1,4 +1,4 @@
-import { Anchor, Center, Group, rem, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { Anchor, Group, rem, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { useClickOutside } from '@mantine/hooks';
 import { IconHome2, IconLogout, IconPinInvoke, IconSettings, IconUser } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
@@ -61,18 +61,26 @@ export function Navbar({ close }: NavbarProps) {
 
   return (
     <nav className={classes.navbar} ref={ref}>
-      <Center>
-        <Anchor href={'https://surmai.app'} target={'_blank'}>
-          <FishOne size={30} />
-        </Anchor>
-      </Center>
+      <Anchor href={'https://surmai.app'} target={'_blank'} className={classes.brand} aria-label={t('home', 'Home')}>
+        <Group gap="sm" wrap="nowrap">
+          <FishOne size={34} />
+          <div className={classes.brandCopy}>
+            <Text fw={600} size="lg">
+              Surmai
+            </Text>
+            <Text size="xs" c="dimmed">
+              Crafted journeys
+            </Text>
+          </div>
+        </Group>
+      </Anchor>
       <div className={classes.navbarMain}>
-        <Stack justify="center" gap={0}>
+        <Stack justify="center" gap="xs" className={classes.navSection}>
           {links}
         </Stack>
       </div>
 
-      <Stack justify="center" gap={0}>
+      <Stack justify="center" gap="xs" className={classes.navSection}>
         <Tooltip label={t('profile', 'Profile')} position="right" transitionProps={{ duration: 0 }}>
           <UnstyledButton
             onClick={() => {

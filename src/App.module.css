@@ -27,12 +27,76 @@
 }
 
 .iosMain {
-  background: var(--ios-bg-light);
+  position: relative;
+  background: transparent;
+  min-height: 100%;
+  padding-block: clamp(32px, 5vh, 64px);
   transition: all var(--ios-transition-base);
+  overflow: hidden;
 }
 
-[data-mantine-color-scheme='dark'] .iosMain {
-  background: var(--ios-bg-dark);
+.mainBackground {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0.85;
+  background-image:
+    radial-gradient(circle at 20% 20%, rgba(90, 200, 250, 0.35), transparent 45%),
+    radial-gradient(circle at 80% 0%, rgba(0, 122, 255, 0.25), transparent 50%),
+    linear-gradient(135deg, rgba(15, 23, 42, 0.04), rgba(255, 255, 255, 0));
+}
+
+[data-mantine-color-scheme='dark'] .mainBackground {
+  background-image:
+    radial-gradient(circle at 20% 20%, rgba(90, 200, 250, 0.3), transparent 45%),
+    radial-gradient(circle at 80% 0%, rgba(10, 132, 255, 0.35), transparent 55%),
+    linear-gradient(160deg, rgba(15, 15, 15, 0.9), rgba(15, 15, 15, 0.4));
+  opacity: 0.65;
+}
+
+.pageContainer {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  padding-inline: clamp(16px, 3vw, 40px);
+}
+
+.contentSurface {
+  position: relative;
+  border-radius: var(--ios-radius-2xl);
+  padding: clamp(20px, 3vw, 48px);
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow:
+    0 25px 45px rgba(15, 23, 42, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+[data-mantine-color-scheme='dark'] .contentSurface {
+  background: rgba(28, 28, 30, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 25px 45px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.outletShell {
+  width: 100%;
+  min-height: 60vh;
+}
+
+.banner {
+  border-radius: var(--ios-radius-xl);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: linear-gradient(135deg, rgba(0, 122, 255, 0.08), rgba(90, 200, 250, 0.08));
+  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.05);
+}
+
+[data-mantine-color-scheme='dark'] .banner {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: linear-gradient(135deg, rgba(10, 132, 255, 0.12), rgba(100, 210, 255, 0.05));
 }
 
 .iosFooter {

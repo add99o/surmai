@@ -69,6 +69,49 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: var(--ios-bg-light);
+  color: var(--ios-gray-10);
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+}
+
+body::before,
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+
+body::before {
+  background: radial-gradient(circle at 10% 20%, rgba(90, 200, 250, 0.2), transparent 50%),
+    radial-gradient(circle at 80% 0%, rgba(0, 122, 255, 0.15), transparent 45%),
+    radial-gradient(circle at 50% 80%, rgba(52, 199, 89, 0.12), transparent 55%);
+}
+
+body::after {
+  background-image: linear-gradient(rgba(255, 255, 255, 0.2) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.2) 1px, transparent 1px);
+  background-size: 140px 140px, 140px 140px;
+  opacity: 0.35;
+  mix-blend-mode: soft-light;
+}
+
+html[data-mantine-color-scheme='dark'] body {
+  background-color: var(--ios-bg-dark);
+  color: rgba(255, 255, 255, 0.86);
+}
+
+html[data-mantine-color-scheme='dark'] body::before {
+  background: radial-gradient(circle at 15% 20%, rgba(90, 200, 250, 0.25), transparent 45%),
+    radial-gradient(circle at 80% 0%, rgba(10, 132, 255, 0.35), transparent 55%),
+    radial-gradient(circle at 50% 80%, rgba(191, 90, 242, 0.16), transparent 60%);
+}
+
+::selection {
+  background: rgba(0, 122, 255, 0.2);
 }
 
 /* iOS-style smooth scrolling */

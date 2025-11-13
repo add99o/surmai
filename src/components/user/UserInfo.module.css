@@ -1,4 +1,55 @@
 .menuLink {
-  color: var(--mantine-color-anchor);
+  color: inherit;
   text-decoration: none;
+}
+
+.trigger {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.75);
+  box-shadow:
+    0 12px 24px rgba(15, 23, 42, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+[data-mantine-color-scheme='dark'] .trigger {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(28, 28, 30, 0.8);
+  box-shadow:
+    0 12px 24px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.trigger:hover {
+  transform: translateY(-1px);
+}
+
+.dropdown {
+  border-radius: 20px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 25px 45px rgba(15, 23, 42, 0.15);
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+[data-mantine-color-scheme='dark'] .dropdown {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(30, 30, 32, 0.9);
+  box-shadow: 0 25px 45px rgba(0, 0, 0, 0.65);
+}
+
+.menuItem {
+  border-radius: 12px;
+  transition: background 0.2s ease;
+}
+
+.menuItem:hover {
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.versionItem {
+  text-align: center;
 }

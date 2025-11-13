@@ -1,4 +1,4 @@
-import { Alert, AppShell, Box, Burger, Container, Group, rem, Text } from '@mantine/core';
+import { Alert, AppShell, Box, Burger, Container, Group, rem, Stack, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { ErrorBoundary } from 'react-error-boundary';
@@ -53,19 +53,31 @@ function App() {
         />
       </AppShell.Navbar>
       <AppShell.Main className={classes.iosMain}>
-        <ErrorBoundary FallbackComponent={Error}>
-          {demoMode && (
-            <Container size={'xl'}>
-              <Alert variant="light" title={t('demo_instance', 'Demo Instance')} icon={<IconInfoCircle />} mb="sm">
-                <Text>
-                  This is a demo instance which gets resets every hour. If you end up creating a trip that you would
-                  want to keep, please export it for your record.
-                </Text>
-              </Alert>
-            </Container>
-          )}
-          <Outlet />
-        </ErrorBoundary>
+        <div className={classes.mainBackground} aria-hidden />
+        <Container size={'xl'} className={classes.pageContainer}>
+          <div className={classes.contentSurface}>
+            <ErrorBoundary FallbackComponent={Error}>
+              <Stack gap="lg">
+                {demoMode && (
+                  <Alert
+                    variant="light"
+                    title={t('demo_instance', 'Demo Instance')}
+                    icon={<IconInfoCircle />}
+                    className={classes.banner}
+                  >
+                    <Text c="dimmed" size="sm">
+                      This is a demo instance which gets resets every hour. If you end up creating a trip that you would
+                      want to keep, please export it for your record.
+                    </Text>
+                  </Alert>
+                )}
+                <Box className={classes.outletShell}>
+                  <Outlet />
+                </Box>
+              </Stack>
+            </ErrorBoundary>
+          </div>
+        </Container>
       </AppShell.Main>
     </AppShell>
   );
