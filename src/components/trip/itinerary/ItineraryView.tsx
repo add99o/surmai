@@ -6,6 +6,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { ActivityLine } from './ActivityLine.tsx';
+import { AiItineraryAssistant } from './AiItineraryAssistant.tsx';
 import { buildActivitiesIndex, buildLodgingIndex, buildTransportationIndex, compareItineraryLine } from './helper.ts';
 import { LodgingLine } from './LodgingLine.tsx';
 import { TransportationLine } from './TransportationLine.tsx';
@@ -102,7 +103,7 @@ export const ItineraryView = ({ trip }: { trip: Trip }) => {
   const today = currentDay.format('YYYYMMDD');
 
   return (
-    <Stack mt={'sm'}>
+    <Stack mt={'sm'} gap="lg">
       {itineraryEntries && (
         <Accordion chevronPosition={'right'} variant={'separated'} multiple={true} mt={'sm'} value={selectedPanels}>
           {itineraryEntries.map(([start, lines]) => {
@@ -176,6 +177,7 @@ export const ItineraryView = ({ trip }: { trip: Trip }) => {
           {t('show_next_day', 'Show Next Day')}
         </Button>
       </Group>
+      <AiItineraryAssistant tripId={trip.id} />
     </Stack>
   );
 };

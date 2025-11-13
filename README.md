@@ -82,6 +82,13 @@ NOTE: The demo site is cleaned up every hour.
 Installation guide with Docker and a potential backup solution can be found in the documentation
  http://surmai.app/documentation/installation
 
+## AI itinerary assistant
+
+The itinerary copilot relies on OpenAI's `gpt-5-mini` model. Set the `OPENAI_API_KEY` environment
+variable for the PocketBase backend before starting Surmai so the assistant can access the trip
+context securely. When the key is absent, the UI automatically disables the chat entry point and
+the backend returns an informative error.
+
 # Credits
 
 ## PocketBase

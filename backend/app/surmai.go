@@ -53,11 +53,12 @@ func (surmai *SurmaiApp) BindRoutes() {
 		se.Router.POST("/api/surmai/trip/import", R.ImportTrip).Bind(apis.RequireAuth())
 
 		// Ops on existing trips
-		tripRoutes := se.Router.Group("/api/surmai/trip/{tripId}")
-		tripRoutes.Bind(apis.RequireAuth(), middleware.RequireTripAccess())
-		tripRoutes.GET("/collaborators", R.GetTripCollaborators)
-		tripRoutes.POST("/export", R.ExportTrip)
-		tripRoutes.POST("/calendar", R.GenerateIcsData)
+                tripRoutes := se.Router.Group("/api/surmai/trip/{tripId}")
+                tripRoutes.Bind(apis.RequireAuth(), middleware.RequireTripAccess())
+                tripRoutes.GET("/collaborators", R.GetTripCollaborators)
+                tripRoutes.POST("/export", R.ExportTrip)
+                tripRoutes.POST("/calendar", R.GenerateIcsData)
+                tripRoutes.POST("/ai/itinerary", R.ChatAboutTripItinerary)
 
 		// General Utility Routes
 		se.Router.GET("/api/surmai/flight-route/{flightNumber}",

@@ -106,3 +106,4 @@ export {
 } from './pocketbase/expenses.ts';
 
 export { getFlightRoute, type FlightRoute } from './pocketbase/flights.ts';
+export { askItineraryAssistant } from './pocketbase/ai.ts';
