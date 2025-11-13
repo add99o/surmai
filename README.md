@@ -37,6 +37,7 @@ Issues.
 - Offline access
 - Privacy
 - Mobile friendly
+- AI-powered itinerary assistant (OpenAI Responses API)
 
 # Rationale
 
@@ -81,6 +82,17 @@ NOTE: The demo site is cleaned up every hour.
 
 Installation guide with Docker and a potential backup solution can be found in the documentation
  http://surmai.app/documentation/installation
+
+## AI itinerary assistant setup
+
+The trip assistant tab relies on the OpenAI Responses API (`gpt-5-mini`). Set the `OPENAI_API_KEY` environment variable for
+the backend service (PocketBase wrapper) before starting it:
+
+```bash
+export OPENAI_API_KEY=sk-your-key
+```
+
+The key must have access to the Responses API. The frontend does not need access to this secret because all calls are proxied through the authenticated PocketBase route.
 
 # Credits
 
