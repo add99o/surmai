@@ -5,18 +5,14 @@ import (
 	"backend/trips"
 	"context"
 	"encoding/json"
-	"github.com/gosticks/openai-responses-api-go"
+	openai "github.com/gosticks/openai-responses-api-go"
 	"github.com/pocketbase/pocketbase/core"
 	"net/http"
 	"os"
 )
 
 func GetAIIterary(e *core.RequestEvent) error {
-	tripId := e.PathParam("tripId")
-	trip, err := e.App.FindRecord("trips", tripId)
-	if err != nil {
-		return err
-	}
+	trip := e.Get("trip").(*core.Record)
 
 	tripExport, err := os.CreateTemp("", "trip-export-")
 	if err != nil {
