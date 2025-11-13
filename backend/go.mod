@@ -6,7 +6,7 @@ toolchain go1.24.9
 
 require (
 	github.com/arran4/golang-ical v0.3.2
-	github.com/gosticks/openai-responses-api-go v0.0.4
+	github.com/openai/openai-go v1.12.0
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pocketbase/dbx v1.11.0
 	github.com/pocketbase/pocketbase v0.30.4
@@ -41,7 +41,11 @@ require (
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/tidwall/geoindex v1.7.0 // indirect
 	github.com/tidwall/geojson v1.4.5 // indirect
+	github.com/tidwall/gjson v1.14.4 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/rtree v1.10.0 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/twpayne/go-polyline v1.1.1 // indirect
 	go.mongodb.org/mongo-driver v1.17.4 // indirect
 	golang.org/x/crypto v0.43.0 // indirect

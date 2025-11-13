@@ -5,11 +5,14 @@ import (
 	"backend/trips"
 	"context"
 	"encoding/json"
-	"github.com/gosticks/openai-responses-api-go/client"
-	openairesponses "github.com/gosticks/openai-responses-api-go"
-	"github.com/pocketbase/pocketbase/core"
 	"net/http"
 	"os"
+
+	"github.com/pocketbase/pocketbase/core"
+
+	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/responses"
 )
 
 func GetAIIterary(e *core.RequestEvent) error {
@@ -69,20 +72,19 @@ func GetAIIterary(e *core.RequestEvent) error {
 		return err
 	}
 
-	c := client.NewClient(os.Getenv("OPENAI_API_KEY"))
-	resp, err := c.Responses.Create(
-		context.Background(),
-		openairesponses.ResponseRequest{
-			Model: "gpt-5-mini",
-			Messages: []openairesponses.ResponseInputMessage{
-				{
-					Role:    "user",
-					Content: string(tripDataBytes),
-				},
-			},
-		},
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	oaiClient := openai.NewClient(
+		option.WithAPIKey(apiKey),
 	)
 
+	params := responses.ResponseNewParams{
+		Model: openai.ChatModelGPT4oMini,
+		Input: responses.ResponseNewParamsInputUnion{
+			OfString: openai.String(string(tripDataBytes)),
+		},
+	}
+
+	resp, err := oaiClient.Responses.New(context.Background(), params)
 	if err != nil {
 		return err
 	}
