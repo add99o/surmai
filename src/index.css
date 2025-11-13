@@ -1,72 +1,280 @@
-/*@tailwind base;*/
-/*@tailwind components;*/
-/*@tailwind utilities;*/
+/* iOS Design System - Global Styles */
 
-/*:root {*/
-/*  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;*/
-/*  line-height: 1.5;*/
-/*  font-weight: 400;*/
+:root {
+  /* iOS System Font Stack */
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  
+  /* iOS Color Tokens */
+  --ios-blue: #007AFF;
+  --ios-blue-light: #5AC8FA;
+  --ios-blue-dark: #0051D5;
+  
+  /* iOS Gray Scale */
+  --ios-gray-1: #F9F9F9;
+  --ios-gray-2: #F2F2F7;
+  --ios-gray-3: #E5E5EA;
+  --ios-gray-4: #D1D1D6;
+  --ios-gray-5: #C7C7CC;
+  --ios-gray-6: #AEAEB2;
+  --ios-gray-7: #8E8E93;
+  --ios-gray-8: #636366;
+  --ios-gray-9: #48484A;
+  --ios-gray-10: #1C1C1E;
+  
+  /* iOS System Backgrounds */
+  --ios-bg-light: #F2F2F7;
+  --ios-bg-dark: #000000;
+  --ios-surface-light: #FFFFFF;
+  --ios-surface-dark: #1C1C1E;
+  
+  /* iOS Spacing (8pt grid) */
+  --ios-spacing-xs: 4px;
+  --ios-spacing-sm: 8px;
+  --ios-spacing-md: 16px;
+  --ios-spacing-lg: 24px;
+  --ios-spacing-xl: 32px;
+  --ios-spacing-2xl: 40px;
+  
+  /* iOS Border Radius */
+  --ios-radius-sm: 8px;
+  --ios-radius-md: 10px;
+  --ios-radius-lg: 12px;
+  --ios-radius-xl: 16px;
+  --ios-radius-2xl: 20px;
+  
+  /* iOS Shadows */
+  --ios-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --ios-shadow-md: 0 2px 4px 0 rgba(0, 0, 0, 0.08);
+  --ios-shadow-lg: 0 4px 8px 0 rgba(0, 0, 0, 0.12);
+  --ios-shadow-xl: 0 8px 16px 0 rgba(0, 0, 0, 0.16);
+  
+  /* iOS Transitions */
+  --ios-transition-fast: 0.15s ease-out;
+  --ios-transition-base: 0.3s ease-in-out;
+  --ios-transition-slow: 0.5s ease-in-out;
+  
+  /* Font Smoothing */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
 
-/*  color-scheme: light dark;*/
-/*  color: rgba(255, 255, 255, 0.87);*/
-/*  background-color: #2F42424;*/
+* {
+  box-sizing: border-box;
+}
 
-/*  font-synthesis: none;*/
-/*  text-rendering: optimizeLegibility;*/
-/*  -webkit-font-smoothing: antialiased;*/
-/*  -moz-osx-font-smoothing: grayscale;*/
-/*}*/
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
 
-/*a {*/
-/*  font-weight: 500;*/
-/*  color: #646cff;*/
-/*  text-decoration: inherit;*/
-/*}*/
-/*a:hover {*/
-/*  color: #535bf2;*/
-/*}*/
+/* iOS-style smooth scrolling */
+html {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
 
-/*body {*/
-/*  margin: 0;*/
-/*  display: flex;*/
-/*  place-items: center;*/
-/*  min-width: 320px;*/
-/*  min-height: 100vh;*/
-/*}*/
+/* iOS-style focus states */
+*:focus-visible {
+  outline: 2px solid var(--ios-blue);
+  outline-offset: 2px;
+  border-radius: var(--ios-radius-sm);
+}
 
-/*h1 {*/
-/*  font-size: 3.2em;*/
-/*  line-height: 1.1;*/
-/*}*/
+/* iOS-style button press animation */
+@keyframes ios-press {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(0.97);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
 
-/*button {*/
-/*  border-radius: 8px;*/
-/*  border: 1px solid transparent;*/
-/*  padding: 0.6em 1.2em;*/
-/*  font-size: 1em;*/
-/*  font-weight: 500;*/
-/*  font-family: inherit;*/
-/*  background-color: #1a1a1a;*/
-/*  cursor: pointer;*/
-/*  transition: border-color 0.25s;*/
-/*}*/
-/*button:hover {*/
-/*  border-color: #646cff;*/
-/*}*/
-/*button:focus,*/
-/*button:focus-visible {*/
-/*  outline: 4px auto -webkit-focus-ring-color;*/
-/*}*/
+/* iOS-style spring animation */
+@keyframes ios-spring {
+  0% {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.02);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
 
-/*@media (prefers-color-scheme: light) {*/
-/*  :root {*/
-/*    color: #213547;*/
-/*    background-color: #ffffff;*/
-/*  }*/
-/*  a:hover {*/
-/*    color: #747bff;*/
-/*  }*/
-/*  button {*/
-/*    background-color: #f9f9f9;*/
-/*  }*/
-/*}*/
+/* iOS-style fade in */
+@keyframes ios-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* iOS-style slide up */
+@keyframes ios-slide-up {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Utility classes for iOS animations */
+.ios-transition {
+  transition: all var(--ios-transition-base);
+}
+
+.ios-press-animation {
+  animation: ios-press 0.2s ease-out;
+}
+
+.ios-spring-animation {
+  animation: ios-spring 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+.ios-fade-in {
+  animation: ios-fade-in var(--ios-transition-base);
+}
+
+.ios-slide-up {
+  animation: ios-slide-up var(--ios-transition-base);
+}
+
+/* iOS-style Button overrides */
+.mantine-Button-root {
+  min-height: 44px;
+  border-radius: var(--ios-radius-md) !important;
+  font-weight: 500;
+  transition: all var(--ios-transition-base);
+  font-size: 17px;
+  padding: 12px 24px;
+}
+
+.mantine-Button-root[data-variant='filled'] {
+  background-color: var(--ios-blue) !important;
+  color: white !important;
+  border: none !important;
+}
+
+.mantine-Button-root[data-variant='filled']:hover {
+  background-color: var(--ios-blue-dark) !important;
+  transform: translateY(-1px);
+  box-shadow: var(--ios-shadow-md);
+}
+
+.mantine-Button-root[data-variant='filled']:active {
+  transform: scale(0.98);
+  box-shadow: var(--ios-shadow-sm);
+}
+
+.mantine-Button-root[data-variant='light'],
+.mantine-Button-root[data-variant='outline'] {
+  border: 1px solid var(--ios-gray-4) !important;
+  background-color: transparent !important;
+  color: var(--ios-blue) !important;
+}
+
+.mantine-Button-root[data-variant='light']:hover,
+.mantine-Button-root[data-variant='outline']:hover {
+  background-color: rgba(0, 122, 255, 0.1) !important;
+  border-color: var(--ios-blue) !important;
+}
+
+.mantine-Button-root[data-variant='subtle'],
+.mantine-Button-root[data-variant='default'] {
+  background-color: var(--ios-gray-2) !important;
+  color: var(--ios-gray-10) !important;
+  border: none !important;
+}
+
+.mantine-Button-root[data-variant='subtle']:hover,
+.mantine-Button-root[data-variant='default']:hover {
+  background-color: var(--ios-gray-3) !important;
+}
+
+/* iOS-style Input overrides */
+.mantine-TextInput-input,
+.mantine-PasswordInput-input,
+.mantine-Textarea-input,
+.mantine-NumberInput-input,
+.mantine-Select-input {
+  border-radius: var(--ios-radius-sm) !important;
+  border: 0.5px solid var(--ios-gray-4) !important;
+  min-height: 44px;
+  font-size: 17px;
+  padding: 12px 16px;
+  transition: all var(--ios-transition-base);
+  background-color: var(--ios-surface-light) !important;
+}
+
+.mantine-TextInput-input:focus,
+.mantine-PasswordInput-input:focus,
+.mantine-Textarea-input:focus,
+.mantine-NumberInput-input:focus,
+.mantine-Select-input:focus {
+  border-color: var(--ios-blue) !important;
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1) !important;
+  outline: none !important;
+}
+
+.mantine-TextInput-label,
+.mantine-PasswordInput-label,
+.mantine-Textarea-label,
+.mantine-NumberInput-label,
+.mantine-Select-label {
+  font-weight: 500;
+  font-size: 13px;
+  margin-bottom: 8px;
+  color: var(--ios-gray-7);
+}
+
+/* iOS-style Card/Paper overrides */
+.mantine-Paper-root,
+.mantine-Card-root {
+  border-radius: var(--ios-radius-lg) !important;
+  border: none !important;
+  box-shadow: var(--ios-shadow-sm) !important;
+  background-color: var(--ios-surface-light) !important;
+  transition: all var(--ios-transition-base);
+}
+
+[data-mantine-color-scheme='dark'] .mantine-Paper-root,
+[data-mantine-color-scheme='dark'] .mantine-Card-root {
+  background-color: var(--ios-surface-dark) !important;
+}
+
+/* iOS-style Modal overrides */
+.mantine-Modal-content {
+  border-radius: var(--ios-radius-2xl) var(--ios-radius-2xl) 0 0 !important;
+  border: none !important;
+}
+
+.mantine-Modal-header {
+  border-bottom: 0.5px solid var(--ios-gray-3) !important;
+  padding: var(--ios-spacing-lg) !important;
+}
+
+.mantine-Modal-body {
+  padding: var(--ios-spacing-lg) !important;
+}
+
+.mantine-Modal-overlay {
+  background: rgba(0, 0, 0, 0.4) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}

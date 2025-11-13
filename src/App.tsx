@@ -5,6 +5,7 @@ import { ErrorBoundary } from 'react-error-boundary';
 import { useTranslation } from 'react-i18next';
 import { Outlet } from 'react-router-dom';
 
+import classes from './App.module.css';
 import { useSurmaiContext } from './app/useSurmaiContext.ts';
 import { Error } from './components/error/Error.tsx';
 import { Navbar } from './components/nav/Navbar.tsx';
@@ -28,9 +29,8 @@ function App() {
       }}
       layout={'alt'}
       padding="md"
-      bg={'var(--mantine-color-dark-light)'}
     >
-      <AppShell.Header>
+      <AppShell.Header className={classes.iosHeader}>
         <Container size={'xl'} h={'100%'} px={'md'}>
           <Group justify={'space-between'}>
             <Group justify={'flex-start'} align={'center'}>
@@ -43,7 +43,7 @@ function App() {
           </Group>
         </Container>
       </AppShell.Header>
-      <AppShell.Navbar>
+      <AppShell.Navbar className={classes.iosNavbar}>
         <Navbar
           close={() => {
             if (opened) {
@@ -52,7 +52,7 @@ function App() {
           }}
         />
       </AppShell.Navbar>
-      <AppShell.Main>
+      <AppShell.Main className={classes.iosMain}>
         <ErrorBoundary FallbackComponent={Error}>
           {demoMode && (
             <Container size={'xl'}>
@@ -67,19 +67,6 @@ function App() {
           <Outlet />
         </ErrorBoundary>
       </AppShell.Main>
-      <AppShell.Footer>
-        <Container size={'xl'}>
-          <Group h={'xl'} justify={'flex-end'}>
-            <Anchor href={'https://surmai.app/documentation'} target={'_blank'}>
-              {t('documentation', 'Documentation')}
-            </Anchor>{' '}
-            |
-            <Anchor href={'https://surmai.app/documentation/about.html'} target={'_blank'}>
-              {t('about_surmai', 'About Surmai')}
-            </Anchor>
-          </Group>
-        </Container>
-      </AppShell.Footer>
     </AppShell>
   );
 }

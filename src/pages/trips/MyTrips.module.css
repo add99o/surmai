@@ -1,15 +1,12 @@
-.card {
-  border: 1px solid var(--mantine-primary-color-light);
-  transition:
-    transform 150ms ease,
-    box-shadow 150ms ease;
-
-  &:hover {
-    transform: scale(1.01);
-    box-shadow: var(--mantine-shadow-md);
-  }
+/* iOS-style page title */
+.title {
+  font-weight: 600;
+  font-size: 28px;
+  line-height: 1.3;
+  color: var(--ios-gray-10);
+  margin-bottom: 8px;
 }
 
-.title {
-  font-weight: bold;
+[data-mantine-color-scheme='dark'] .title {
+  color: var(--ios-gray-1);
 }

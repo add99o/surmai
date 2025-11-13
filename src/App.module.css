@@ -1,0 +1,50 @@
+/* iOS-style AppShell with blur effects */
+
+.iosHeader {
+  background: rgba(242, 242, 247, 0.8) !important;
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 0.5px solid rgba(0, 0, 0, 0.1);
+  transition: all var(--ios-transition-base);
+}
+
+[data-mantine-color-scheme='dark'] .iosHeader {
+  background: rgba(28, 28, 30, 0.8) !important;
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.1);
+}
+
+.iosNavbar {
+  background: rgba(242, 242, 247, 0.8) !important;
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-right: 0.5px solid rgba(0, 0, 0, 0.1);
+  transition: all var(--ios-transition-base);
+}
+
+[data-mantine-color-scheme='dark'] .iosNavbar {
+  background: rgba(28, 28, 30, 0.8) !important;
+  border-right: 0.5px solid rgba(255, 255, 255, 0.1);
+}
+
+.iosMain {
+  background: var(--ios-bg-light);
+  transition: all var(--ios-transition-base);
+}
+
+[data-mantine-color-scheme='dark'] .iosMain {
+  background: var(--ios-bg-dark);
+}
+
+.iosFooter {
+  background: rgba(242, 242, 247, 0.8) !important;
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-top: 0.5px solid rgba(0, 0, 0, 0.1);
+  transition: all var(--ios-transition-base);
+}
+
+[data-mantine-color-scheme='dark'] .iosFooter {
+  background: rgba(28, 28, 30, 0.8) !important;
+  border-top: 0.5px solid rgba(255, 255, 255, 0.1);
+}
+

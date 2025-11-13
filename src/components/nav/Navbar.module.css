@@ -1,42 +1,64 @@
+/* iOS-style Navbar */
 .navbar {
-  /*width: rem(80px);*/
   height: 100%;
-  padding: var(--mantine-spacing-md);
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  background-color: var(--mantine-primary-color-filled);
+  background: transparent;
 }
 
 .navbarMain {
   flex: 1;
-  margin-top: rem(50px);
+  margin-top: 50px;
 }
 
 .link {
-  /*width: rem(50px);*/
-  height: rem(50px);
-  border-radius: var(--mantine-radius-md);
+  min-height: 44px;
+  height: 50px;
+  border-radius: var(--ios-radius-lg);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--mantine-color-white);
+  color: var(--ios-gray-7);
+  transition: all var(--ios-transition-base);
+  position: relative;
+  margin-bottom: 4px;
 
   @media (max-width: $mantine-breakpoint-sm) {
     align-items: center;
-    padding-left: rem(10px);
+    padding-left: 10px;
     justify-content: flex-start;
   }
 
   &:hover {
-    background-color: var(--mantine-primary-color-7);
+    background-color: rgba(0, 122, 255, 0.1);
+    color: var(--ios-blue);
+    transform: scale(1.02);
+  }
+
+  &:active {
+    transform: scale(0.98);
+    background-color: rgba(0, 122, 255, 0.15);
   }
 
   &[data-active] {
     &,
     &:hover {
-      box-shadow: var(--mantine-shadow-sm);
-      background-color: var(--mantine-color-white);
-      color: var(--mantine-primary-color-6);
+      background-color: rgba(0, 122, 255, 0.15);
+      color: var(--ios-blue);
+      font-weight: 600;
+    }
+
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 3px;
+      height: 20px;
+      background-color: var(--ios-blue);
+      border-radius: 0 2px 2px 0;
     }
   }
 }
