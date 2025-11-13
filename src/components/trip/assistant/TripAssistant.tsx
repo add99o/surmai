@@ -1,31 +1,16 @@
-import {
-  Alert,
-  Box,
-  Button,
-  Group,
-  Loader,
-  Paper,
-  Stack,
-  Text,
-  Textarea,
-  rem,
-  useComputedColorScheme,
-  useMantineTheme,
-} from '@mantine/core';
+import { Alert, Box, Button, Group, Loader, Paper, Stack, Text, Textarea, rem } from '@mantine/core';
 import { IconAlertCircle, IconSend } from '@tabler/icons-react';
-import { useMutation } from '@tanstack/react-query';
 import { nanoid } from 'nanoid';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import DOMPurify from 'dompurify';
 
-import { askTripAssistant } from '../../../lib/api';
+import { pb } from '../../../lib/api/pocketbase/pocketbase.ts';
 import { formatDate } from '../../../lib/time.ts';
 import classes from './TripAssistant.module.css';
 
-import type { AssistantMessage, AssistantResponse } from '../../../types/assistant.ts';
+import type { AssistantMessage } from '../../../types/assistant.ts';
 import type { Trip } from '../../../types/trips.ts';
-import type { ClientResponseError } from 'pocketbase';
 
 type TripAssistantProps = {
   trip: Trip;
@@ -34,12 +19,12 @@ type TripAssistantProps = {
 const MAX_PREVIEW_HEIGHT = 420;
 
 export const TripAssistant = ({ trip }: TripAssistantProps) => {
-  const theme = useMantineTheme();
-  const colorScheme = useComputedColorScheme('light', { getInitialValueInEffect: true });
   const { t, i18n } = useTranslation();
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [isStreaming, setIsStreaming] = useState(false);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const controllerRef = useRef<AbortController | null>(null);
 
   const introMessage = useMemo<AssistantMessage>(
     () => ({
@@ -67,36 +52,115 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
     }
   }, [messages, introMessage]);
 
-  const mutation = useMutation({
-    mutationFn: (conversation: AssistantMessage[]) => askTripAssistant(trip.id, conversation),
-    onSuccess: (response: AssistantResponse) => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          ...response.message,
-          id: response.message.id ?? nanoid(),
-        },
-      ]);
-      setError(null);
-    },
-    onError: (err: unknown) => {
-      setError(resolveAssistantError(err, t('assistant_generic_error', 'Unable to reach the assistant. Please try again.')));
-    },
-  });
+  useEffect(() => {
+    return () => {
+      controllerRef.current?.abort();
+    };
+  }, []);
 
-  const handleSend = () => {
-    if (!input.trim() || mutation.isPending) {
+  const handleSend = async () => {
+    if (!input.trim() || isStreaming) {
       return;
     }
+
     const userMessage: AssistantMessage = {
       id: nanoid(),
       role: 'user',
       content: input.trim(),
     };
+
+    const assistantId = nanoid();
+    const assistantPlaceholder: AssistantMessage = {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+    };
+
     const nextConversation = [...messages, userMessage];
-    setMessages(nextConversation);
+    setMessages((prev) => [...prev, userMessage, assistantPlaceholder]);
     setInput('');
-    mutation.mutate(nextConversation);
+    setError(null);
+
+    try {
+      await streamAssistantReply(nextConversation, assistantId);
+    } catch (err) {
+      const fallback = t('assistant_generic_error', 'Unable to reach the assistant. Please try again.');
+      setError(resolveAssistantError(err, fallback));
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === assistantId ? { ...message, content: t('assistant_error_short', 'Something went wrong.') } : message
+        )
+      );
+    }
+  };
+
+  const streamAssistantReply = async (conversation: AssistantMessage[], assistantId: string) => {
+    setIsStreaming(true);
+    const controller = new AbortController();
+    controllerRef.current = controller;
+
+    try {
+      const response = await fetch(`/api/surmai/trip/${trip.id}/assistant/stream`, {
+        method: 'POST',
+        headers: buildAuthHeaders(),
+        body: JSON.stringify({ messages: conversation }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok || !response.body) {
+        const message = await response.text();
+        throw new Error(message || 'Assistant stream failed.');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const { events, remaining } = parseSSEPayloads(buffer);
+        buffer = remaining;
+        for (const event of events) {
+          if (event.type === 'delta' && event.text) {
+            appendAssistantText(assistantId, event.text);
+          } else if (event.type === 'error') {
+            throw new Error(event.message || 'Assistant stream failed.');
+          } else if (event.type === 'done') {
+            return;
+          }
+        }
+      }
+
+      if (buffer.trim()) {
+        const { events } = parseSSEPayloads(buffer + '\n\n');
+        for (const event of events) {
+          if (event.type === 'delta' && event.text) {
+            appendAssistantText(assistantId, event.text);
+          }
+        }
+      }
+    } finally {
+      controllerRef.current = null;
+      setIsStreaming(false);
+    }
+  };
+
+  const appendAssistantText = (assistantId: string, chunk: string) => {
+    setMessages((prev) =>
+      prev.map((message) => {
+        if (message.id === assistantId) {
+          return {
+            ...message,
+            content: message.content + chunk,
+          };
+        }
+        return message;
+      })
+    );
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -107,17 +171,6 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
   };
 
   const conversationWithGreeting: AssistantMessage[] = [introMessage, ...messages];
-
-  const renderedMessages = mutation.isPending
-    ? [
-        ...conversationWithGreeting,
-        {
-          id: 'assistant-typing',
-          role: 'assistant',
-          content: t('assistant_thinking', 'Thinking through the best answer...'),
-        },
-      ]
-    : conversationWithGreeting;
 
   return (
     <Stack gap="md" mt="md">
@@ -143,34 +196,24 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
         </Alert>
       )}
 
-      <Paper withBorder radius="md" p="sm">
-        <Box
-          ref={viewportRef}
-          style={{
-            maxHeight: rem(MAX_PREVIEW_HEIGHT),
-            overflowY: 'auto',
-            padding: `${rem(8)} ${rem(4)}`,
-          }}
-        >
+      <Paper withBorder={false} radius="lg" p={0} className={classes.chatScroller}>
+        <Box ref={viewportRef} style={{ maxHeight: rem(MAX_PREVIEW_HEIGHT), overflowY: 'auto', padding: rem(16) }}>
           <Stack gap="sm">
-            {renderedMessages.map((message) => (
+            {conversationWithGreeting.map((message) => (
               <Paper
                 key={message.id}
-                shadow="xs"
-                radius="md"
-                p="sm"
-                style={{
-                  alignSelf: message.role === 'assistant' ? 'flex-start' : 'flex-end',
-                  maxWidth: '90%',
-                  backgroundColor:
-                    message.role === 'assistant'
-                      ? colorScheme === 'dark'
-                        ? 'var(--mantine-color-dark-6)'
-                        : 'var(--mantine-color-gray-0)'
-                      : `var(--mantine-color-${theme.primaryColor}-1, var(--mantine-primary-color-1))`,
-                }}
+                className={`${classes.chatBubble} ${
+                  message.role === 'assistant' ? classes.assistantBubble : classes.userBubble
+                }`}
+                style={{ alignSelf: message.role === 'assistant' ? 'flex-start' : 'flex-end', maxWidth: '92%' }}
               >
-                <Text size="xs" fw={600} c="dimmed">
+                <Text
+                  size="xs"
+                  fw={700}
+                  className={`${classes.messageMeta} ${
+                    message.role === 'assistant' ? classes.messageMetaAssistant : classes.messageMetaUser
+                  }`}
+                >
                   {message.role === 'assistant' ? t('assistant_label', 'Assistant') : t('you', 'You')}
                 </Text>
                 <Box
@@ -179,7 +222,7 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
                 />
               </Paper>
             ))}
-            {mutation.isPending && (
+            {isStreaming && (
               <Group gap="xs">
                 <Loader size="sm" />
                 <Text size="sm" c="dimmed">
@@ -193,19 +236,20 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
 
       <Stack gap="xs">
         <Textarea
+          classNames={{ input: classes.inputArea }}
           placeholder={t('assistant_input_placeholder', 'Ask about flights, dinner plans, or request ideas...')}
           minRows={3}
           autosize
           value={input}
           onChange={(event) => setInput(event.currentTarget.value)}
           onKeyDown={handleKeyDown}
-          disabled={mutation.isPending}
+          disabled={isStreaming}
         />
         <Group justify="space-between">
           <Text size="xs" c="dimmed">
             {t('assistant_input_hint', 'Press Enter to send, Shift+Enter for a new line.')}
           </Text>
-          <Button leftSection={<IconSend size={16} />} onClick={handleSend} disabled={!input.trim() || mutation.isPending}>
+          <Button leftSection={<IconSend size={16} />} onClick={handleSend} disabled={!input.trim() || isStreaming}>
             {t('assistant_send', 'Send')}
           </Button>
         </Group>
@@ -219,13 +263,8 @@ const resolveAssistantError = (error: unknown, fallback: string) => {
     return fallback;
   }
 
-  const maybeResponse = error as ClientResponseError;
-  if (maybeResponse?.response?.message) {
-    return maybeResponse.response.message;
-  }
-
-  if (maybeResponse?.message) {
-    return maybeResponse.message;
+  if (typeof error === 'string') {
+    return error;
   }
 
   if (error instanceof Error && error.message) {
@@ -355,4 +394,44 @@ const applyInlineFormatting = (value: string) => {
   output = output.replace(/`([^`]+)`/g, '<code>$1</code>');
   output = output.replace(/\[([^\]]+)]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
   return output;
+};
+
+const parseSSEPayloads = (buffer: string) => {
+  const segments = buffer.split('\n\n');
+  const remaining = segments.pop() ?? '';
+  const events: Array<Record<string, any>> = [];
+
+  segments.forEach((segment) => {
+    const line = segment
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.startsWith('data:'));
+    if (!line) {
+      return;
+    }
+    const payload = line.slice(5).trim();
+    if (!payload) {
+      return;
+    }
+    try {
+      events.push(JSON.parse(payload));
+    } catch {
+      // Ignore malformed chunks
+    }
+  });
+
+  return { events, remaining };
+};
+
+const buildAuthHeaders = (): HeadersInit => {
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+  };
+
+  const token = pb.authStore.token;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  return headers;
 };

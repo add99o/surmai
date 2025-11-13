@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -193,6 +194,80 @@ func TripAssistant(e *core.RequestEvent) error {
 			Content: reply,
 		},
 	})
+}
+
+func TripAssistantStream(e *core.RequestEvent) error {
+	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+	if apiKey == "" {
+		return e.JSON(http.StatusServiceUnavailable, map[string]string{
+			"error": "OPENAI_API_KEY is not configured on the server",
+		})
+	}
+
+	var req tripAssistantRequest
+	if err := json.NewDecoder(e.Request.Body).Decode(&req); err != nil {
+		return e.JSON(http.StatusBadRequest, map[string]string{
+			"error": "invalid request body",
+		})
+	}
+
+	if len(req.Messages) == 0 {
+		return e.JSON(http.StatusBadRequest, map[string]string{
+			"error": "at least one message is required",
+		})
+	}
+
+	tripVal := e.Get("trip")
+	if tripVal == nil {
+		return e.JSON(http.StatusBadRequest, map[string]string{
+			"error": "trip context is missing",
+		})
+	}
+
+	tripRecord, ok := tripVal.(*core.Record)
+	if !ok {
+		return e.JSON(http.StatusBadRequest, map[string]string{
+			"error": "unable to read trip info",
+		})
+	}
+
+	ctx, err := buildTripAssistantContext(e.App, tripRecord)
+	if err != nil {
+		e.App.Logger().Error("TripAssistant stream build context error", "error", err, "tripId", tripRecord.Id)
+		return e.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "unable to load the latest trip context",
+		})
+	}
+
+	responseInput, err := buildResponsesInput(req.Messages, ctx)
+	if err != nil {
+		e.App.Logger().Error("TripAssistant stream failed to build input", "error", err, "tripId", tripRecord.Id)
+		return e.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "could not format the assistant request",
+		})
+	}
+
+	flusher, ok := e.Response.(http.Flusher)
+	if !ok {
+		return e.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "streaming is not supported on this server",
+		})
+	}
+
+	writer := e.Response
+	writer.Header().Set("Content-Type", "text/event-stream")
+	writer.Header().Set("Cache-Control", "no-cache")
+	writer.Header().Set("Connection", "keep-alive")
+
+	if err := streamResponsesToClient(e.Request.Context(), writer, flusher, apiKey, responseInput); err != nil {
+		e.App.Logger().Error("TripAssistant stream failed", "error", err, "tripId", tripRecord.Id)
+		sendSSEEvent(writer, flusher, map[string]string{
+			"type":    "error",
+			"message": "assistant request failed",
+		})
+	}
+
+	return nil
 }
 
 func buildTripAssistantContext(app core.App, trip *core.Record) (*tripAssistantContext, error) {
@@ -444,7 +519,7 @@ func buildResponsesInput(messages []assistantMessage, ctx *tripAssistantContext)
 		return nil, err
 	}
 
-	systemPrompt := "You are Surmai's AI-powered itinerary assistant. Use the trip context to answer questions, reference actual plans, and offer proactive suggestions when helpful. Keep answers concise, organized, and grounded in the provided data unless the user explicitly asks for speculation."
+	systemPrompt := "You are Surmai's AI-powered itinerary assistant. Use the trip context to answer questions, reference actual plans, and offer proactive suggestions when helpful. Keep answers concise, organized, and grounded in the provided data unless the user explicitly asks for speculation. Answers given should be easy to understand, instead of using 24hr time format, opt to use 12hr time format instead with AM/PM, any times you see in the trip context information is the local time for that area. For dates. use the format MM-DD and do not include the year."
 	contextPrompt := fmt.Sprintf("Latest trip context:\n%s", string(ctxJSON))
 
 	input := []map[string]interface{}{
@@ -452,7 +527,7 @@ func buildResponsesInput(messages []assistantMessage, ctx *tripAssistantContext)
 		newResponsesTextBlock("developer", contextPrompt),
 	}
 
-	for _, message := range truncateConversation(messages, 20) {
+	for _, message := range messages {
 		if message.Content == "" {
 			continue
 		}
@@ -464,13 +539,6 @@ func buildResponsesInput(messages []assistantMessage, ctx *tripAssistantContext)
 	}
 
 	return input, nil
-}
-
-func truncateConversation(messages []assistantMessage, limit int) []assistantMessage {
-	if len(messages) <= limit {
-		return messages
-	}
-	return messages[len(messages)-limit:]
 }
 
 func newResponsesTextBlock(role, text string) map[string]interface{} {
@@ -495,11 +563,14 @@ func invokeResponsesAPI(ctx context.Context, apiKey string, input []map[string]i
 		"model": openAIModel,
 		"input": input,
 		"reasoning": map[string]string{
-			"effort": "minimal",
+			"effort": "low",
 		},
 		"text": map[string]string{
 			"verbosity": "low",
 		},
+		"tools":       []map[string]interface{}{{"type": "web_search"}},
+		"tool_choice": "auto",
+		"include":     []string{"web_search_call.action.sources"},
 	}
 
 	body, err := json.Marshal(payload)
@@ -542,6 +613,127 @@ func invokeResponsesAPI(ctx context.Context, apiKey string, input []map[string]i
 	}
 
 	return text, nil
+}
+
+func streamResponsesToClient(
+	ctx context.Context,
+	writer http.ResponseWriter,
+	flusher http.Flusher,
+	apiKey string,
+	input []map[string]interface{},
+) error {
+	payload := map[string]interface{}{
+		"model": openAIModel,
+		"input": input,
+		"reasoning": map[string]string{
+			"effort": "low",
+		},
+		"text": map[string]string{
+			"verbosity": "low",
+		},
+		"tools":       []map[string]interface{}{{"type": "web_search"}},
+		"tool_choice": "auto",
+		"include":     []string{"web_search_call.action.sources"},
+		"stream":      true,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, openAIResponsesEndpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{
+		Timeout: 0,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return parseOpenAIError(resp)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	completed := false
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue
+		}
+
+		eventType, _ := event["type"].(string)
+		switch eventType {
+		case "response.output_text.delta":
+			delta, _ := event["delta"].(string)
+			if delta != "" {
+				sendSSEEvent(writer, flusher, map[string]string{
+					"type": "delta",
+					"text": delta,
+				})
+			}
+		case "response.completed":
+			sendSSEEvent(writer, flusher, map[string]string{
+				"type": "done",
+			})
+			completed = true
+		case "response.error":
+			message := stringValue(event["message"])
+			if message == "" {
+				message = "assistant request failed"
+			}
+			sendSSEEvent(writer, flusher, map[string]string{
+				"type":    "error",
+				"message": message,
+			})
+		}
+	}
+
+	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+
+	if !completed {
+		sendSSEEvent(writer, flusher, map[string]string{
+			"type": "done",
+		})
+	}
+
+	return nil
+}
+
+func sendSSEEvent(writer http.ResponseWriter, flusher http.Flusher, payload map[string]string) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	_, _ = writer.Write([]byte("data: "))
+	_, _ = writer.Write(data)
+	_, _ = writer.Write([]byte("\n\n"))
+	flusher.Flush()
 }
 
 func parseOpenAIError(resp *http.Response) error {

@@ -97,7 +97,6 @@ export {
 
 export { getTripAttachments, deleteAttachment, uploadAttachments, getHtmlFile } from './pocketbase/attachments.ts';
 
-export { askTripAssistant } from './pocketbase/assistant.ts';
 
 export {
   listExpenses,
