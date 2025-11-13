@@ -17,9 +17,11 @@ import { useMutation } from '@tanstack/react-query';
 import { nanoid } from 'nanoid';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import DOMPurify from 'dompurify';
 
 import { askTripAssistant } from '../../../lib/api';
 import { formatDate } from '../../../lib/time.ts';
+import classes from './TripAssistant.module.css';
 
 import type { AssistantMessage, AssistantResponse } from '../../../types/assistant.ts';
 import type { Trip } from '../../../types/trips.ts';
@@ -171,9 +173,10 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
                 <Text size="xs" fw={600} c="dimmed">
                   {message.role === 'assistant' ? t('assistant_label', 'Assistant') : t('you', 'You')}
                 </Text>
-                <Text size="sm" mt={4}>
-                  {message.content}
-                </Text>
+                <Box
+                  className={classes.messageBody}
+                  dangerouslySetInnerHTML={{ __html: sanitizeMarkdown(message.content) }}
+                />
               </Paper>
             ))}
             {mutation.isPending && (
@@ -230,4 +233,126 @@ const resolveAssistantError = (error: unknown, fallback: string) => {
   }
 
   return fallback;
+};
+
+const sanitizeMarkdown = (text: string) => {
+  const html = markdownToHtml(text);
+  return DOMPurify.sanitize(html);
+};
+
+const markdownToHtml = (raw: string) => {
+  if (!raw || !raw.trim()) {
+    return '';
+  }
+
+  const normalized = raw.replace(/\r\n/g, '\n');
+  const lines = normalized.split('\n');
+  const htmlParts: string[] = [];
+  let listType: 'ul' | 'ol' | null = null;
+  let inCodeBlock = false;
+  let codeLanguage = '';
+  let codeLines: string[] = [];
+
+  const closeList = () => {
+    if (listType) {
+      htmlParts.push(`</${listType}>`);
+      listType = null;
+    }
+  };
+
+  const closeCodeBlock = () => {
+    if (!inCodeBlock) {
+      return;
+    }
+    const langAttr = codeLanguage ? ` class="language-${codeLanguage}"` : '';
+    htmlParts.push(`<pre><code${langAttr}>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+    inCodeBlock = false;
+    codeLanguage = '';
+    codeLines = [];
+  };
+
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+
+    if (trimmedLine.startsWith('```')) {
+      if (inCodeBlock) {
+        closeCodeBlock();
+      } else {
+        closeList();
+        inCodeBlock = true;
+        codeLanguage = trimmedLine.slice(3).trim();
+      }
+      continue;
+    }
+
+    if (inCodeBlock) {
+      codeLines.push(line);
+      continue;
+    }
+
+    if (trimmedLine === '') {
+      closeList();
+      htmlParts.push('<br />');
+      continue;
+    }
+
+    const headingMatch = trimmedLine.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      closeList();
+      const level = headingMatch[1].length;
+      htmlParts.push(`<h${level}>${applyInlineFormatting(headingMatch[2])}</h${level}>`);
+      continue;
+    }
+
+    if (/^[-*+]\s+/.test(trimmedLine)) {
+      if (listType !== 'ul') {
+        closeList();
+        listType = 'ul';
+        htmlParts.push('<ul>');
+      }
+      const itemText = trimmedLine.replace(/^[-*+]\s+/, '');
+      htmlParts.push(`<li>${applyInlineFormatting(itemText)}</li>`);
+      continue;
+    }
+
+    if (/^\d+\.\s+/.test(trimmedLine)) {
+      if (listType !== 'ol') {
+        closeList();
+        listType = 'ol';
+        htmlParts.push('<ol>');
+      }
+      const itemText = trimmedLine.replace(/^\d+\.\s+/, '');
+      htmlParts.push(`<li>${applyInlineFormatting(itemText)}</li>`);
+      continue;
+    }
+
+    if (/^>\s?/.test(trimmedLine)) {
+      closeList();
+      const quote = trimmedLine.replace(/^>\s?/, '');
+      htmlParts.push(`<blockquote>${applyInlineFormatting(quote)}</blockquote>`);
+      continue;
+    }
+
+    closeList();
+    htmlParts.push(`<p>${applyInlineFormatting(trimmedLine)}</p>`);
+  }
+
+  closeCodeBlock();
+  closeList();
+
+  return htmlParts.join('');
+};
+
+const escapeHtml = (value: string) => {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+};
+
+const applyInlineFormatting = (value: string) => {
+  let output = escapeHtml(value);
+  output = output.replace(/(\*\*|__)(.*?)\1/g, '<strong>$2</strong>');
+  output = output.replace(/(\*|_)(.*?)\1/g, '<em>$2</em>');
+  output = output.replace(/~~(.*?)~~/g, '<del>$1</del>');
+  output = output.replace(/`([^`]+)`/g, '<code>$1</code>');
+  output = output.replace(/\[([^\]]+)]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+  return output;
 };
