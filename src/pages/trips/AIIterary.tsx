@@ -1,5 +1,5 @@
 import { Box, Title } from '@mantine/core';
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import { apiClient } from '../../lib/api/client';
 
