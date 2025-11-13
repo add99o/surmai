@@ -32,6 +32,11 @@ type openAIContent struct {
 	Text string `json:"text"`
 }
 
+const (
+	openAIInputTextType  = "input_text"
+	openAIOutputTextType = "output_text"
+)
+
 type openAIInput struct {
 	Role    string          `json:"role"`
 	Content []openAIContent `json:"content"`
@@ -96,7 +101,7 @@ func ChatAboutTripItinerary(e *core.RequestEvent) error {
 	systemInput := openAIInput{
 		Role: "system",
 		Content: []openAIContent{
-			{Type: "text", Text: fmt.Sprintf("%s\n\nTrip data snapshot:\n%s", aiSystemPrompt, contextSummary)},
+			{Type: openAIInputTextType, Text: fmt.Sprintf("%s\n\nTrip data snapshot:\n%s", aiSystemPrompt, contextSummary)},
 		},
 	}
 
@@ -174,7 +179,7 @@ func sanitizeMessages(messages []aiChatMessage) []openAIInput {
 
 		inputs = append(inputs, openAIInput{
 			Role:    role,
-			Content: []openAIContent{{Type: "text", Text: text}},
+			Content: []openAIContent{{Type: openAIInputTextType, Text: text}},
 		})
 	}
 
@@ -188,7 +193,7 @@ func extractAssistantReply(resp openAIResponsePayload) string {
 			continue
 		}
 		for _, content := range output.Content {
-			if content.Type == "output_text" || content.Type == "text" {
+			if content.Type == openAIOutputTextType || content.Type == "text" {
 				builder.WriteString(content.Text)
 			}
 		}
