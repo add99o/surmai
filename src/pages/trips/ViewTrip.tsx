@@ -9,6 +9,7 @@ import { useParams } from 'react-router-dom';
 import { useSurmaiContext } from '../../app/useSurmaiContext.ts';
 import { Header } from '../../components/nav/Header.tsx';
 import { TripAttachments } from '../../components/trip/attachments/TripAttachments.tsx';
+import { TripAssistant } from '../../components/trip/assistant/TripAssistant.tsx';
 import { ExpensesPanel } from '../../components/trip/expenses/ExpensesPanel.tsx';
 import { ItineraryView } from '../../components/trip/itinerary/ItineraryView.tsx';
 import { TripNotes } from '../../components/trip/notes/TripNotes.tsx';
@@ -150,6 +151,7 @@ export const ViewTrip = () => {
           <Tabs.Tab value="attachments">{t('attachments', 'Attachments')}</Tabs.Tab>
           <Tabs.Tab value="expenses">{t('expenses', 'Expenses')}</Tabs.Tab>
           <Tabs.Tab value="notes">{t('notes', 'Notes')}</Tabs.Tab>
+          <Tabs.Tab value="assistant">{t('assistant_tab', 'AI Assistant')}</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="organization">
@@ -184,6 +186,11 @@ export const ViewTrip = () => {
         <Tabs.Panel value="notes">
           <TripNotes refetch={refetchTrip} trip={trip} />
         </Tabs.Panel>
+        {trip && (
+          <Tabs.Panel value="assistant">
+            <TripAssistant trip={trip} />
+          </Tabs.Panel>
+        )}
       </Tabs>
     </Container>
   );
