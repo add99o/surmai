@@ -1,4 +1,4 @@
-import { Alert, Anchor, AppShell, Box, Burger, Container, Group, rem, Text } from '@mantine/core';
+import { Alert, AppShell, Box, Burger, Container, Group, rem, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { ErrorBoundary } from 'react-error-boundary';
@@ -67,19 +67,6 @@ function App() {
           <Outlet />
         </ErrorBoundary>
       </AppShell.Main>
-      <AppShell.Footer>
-        <Container size={'xl'}>
-          <Group h={'xl'} justify={'flex-end'}>
-            <Anchor href={'https://surmai.app/documentation'} target={'_blank'}>
-              {t('documentation', 'Documentation')}
-            </Anchor>{' '}
-            |
-            <Anchor href={'https://surmai.app/documentation/about.html'} target={'_blank'}>
-              {t('about_surmai', 'About Surmai')}
-            </Anchor>
-          </Group>
-        </Container>
-      </AppShell.Footer>
     </AppShell>
   );
 }
