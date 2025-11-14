@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import DOMPurify from 'dompurify';
+import dayjs from 'dayjs';
 
 import { pb } from '../../../lib/api/pocketbase/pocketbase.ts';
 import { formatDate } from '../../../lib/time.ts';
@@ -16,6 +17,16 @@ type TripAssistantProps = {
   trip: Trip;
 };
 
+type AssistantProposal = {
+  id: string;
+  tool: string;
+  arguments: Record<string, any>;
+  summary: string;
+  expiresAt: string;
+};
+
+type ProposalDecision = 'approve' | 'decline' | 'timeout';
+
 const MAX_PREVIEW_HEIGHT = 420;
 
 export const TripAssistant = ({ trip }: TripAssistantProps) => {
@@ -23,6 +34,8 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [pendingProposal, setPendingProposal] = useState<AssistantProposal | null>(null);
+  const [proposalCountdown, setProposalCountdown] = useState<number>(0);
   const viewportRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<AbortController | null>(null);
 
@@ -58,8 +71,39 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
     };
   }, []);
 
+  useEffect(() => {
+    if (!pendingProposal) {
+      setProposalCountdown(0);
+      return;
+    }
+
+    let timeoutHandled = false;
+    const expires = dayjs(pendingProposal.expiresAt);
+
+    const updateCountdown = () => {
+      const diff = expires.diff(dayjs(), 'second');
+      if (diff <= 0) {
+        setProposalCountdown(0);
+        if (!timeoutHandled) {
+          timeoutHandled = true;
+          void handleProposalDecision('timeout');
+        }
+        return;
+      }
+      setProposalCountdown(diff);
+    };
+
+    updateCountdown();
+    const interval = window.setInterval(updateCountdown, 1000);
+    return () => window.clearInterval(interval);
+  }, [pendingProposal]);
+
   const handleSend = async () => {
     if (!input.trim() || isStreaming) {
+      return;
+    }
+    if (pendingProposal) {
+      setError(t('assistant_pending_warning', 'Please approve or decline the pending change first.'));
       return;
     }
 
@@ -125,6 +169,19 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
         const { events, remaining } = parseSSEPayloads(buffer);
         buffer = remaining;
         for (const event of events) {
+          if (event.type === 'proposal' && event.proposal) {
+            const proposal = event.proposal as AssistantProposal;
+            setPendingProposal(proposal);
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.role === 'assistant' && message.content === ''
+                  ? { ...message, content: proposal.summary }
+                  : message
+              )
+            );
+            await reader.cancel().catch(() => undefined);
+            return;
+          }
           if (event.type === 'delta' && event.text) {
             appendAssistantText(assistantId, event.text);
           } else if (event.type === 'error') {
@@ -161,6 +218,45 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
         return message;
       })
     );
+  };
+
+  const handleProposalDecision = async (decision: ProposalDecision) => {
+    if (!pendingProposal) {
+      return;
+    }
+    setIsStreaming(true);
+    try {
+      const response = await fetch(
+        `/api/surmai/trip/${trip.id}/assistant/proposals/${pendingProposal.id}/decision`,
+        {
+          method: 'POST',
+          headers: buildAuthHeaders(),
+          body: JSON.stringify({ decision }),
+        }
+      );
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to process the decision.');
+      }
+
+      if (payload?.message) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: nanoid(),
+            role: 'assistant',
+            content: payload.message as string,
+          },
+        ]);
+      }
+    } catch (err) {
+      const fallback = t('assistant_generic_error', 'Unable to reach the assistant. Please try again.');
+      setError(resolveAssistantError(err, fallback));
+    } finally {
+      setPendingProposal(null);
+      setIsStreaming(false);
+    }
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -233,6 +329,39 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
           </Stack>
         </Box>
       </Paper>
+
+      {pendingProposal && (
+        <Paper withBorder radius="lg" className={classes.proposalCard}>
+          <Stack gap="sm">
+            <Group justify="space-between" align="flex-start">
+              <div>
+                <Text fw={600}>{t('assistant_pending_change', 'Pending change')}</Text>
+                <Text size="sm" c="dimmed">
+                  {pendingProposal.summary}
+                </Text>
+              </div>
+              <Text size="sm" className={classes.proposalCountdown}>
+                {proposalCountdown > 0
+                  ? t('proposal_expires_in', { defaultValue: '{{count}}s left', count: proposalCountdown })
+                  : t('proposal_expired', 'Expired')}
+              </Text>
+            </Group>
+            {renderProposalDetails(pendingProposal)}
+            <Group justify="flex-end" className={classes.proposalActions}>
+              <Button
+                variant="light"
+                onClick={() => handleProposalDecision('decline')}
+                disabled={isStreaming}
+              >
+                {t('assistant_decline', 'Decline')}
+              </Button>
+              <Button onClick={() => handleProposalDecision('approve')} disabled={isStreaming}>
+                {t('assistant_approve', 'Approve')}
+              </Button>
+            </Group>
+          </Stack>
+        </Paper>
+      )}
 
       <Stack gap="xs">
         <Textarea
@@ -434,4 +563,25 @@ const buildAuthHeaders = (): HeadersInit => {
   }
 
   return headers;
+};
+
+const renderProposalDetails = (proposal: AssistantProposal) => {
+  const entries = Object.entries(proposal.arguments || {});
+  if (entries.length === 0) {
+    return null;
+  }
+  return (
+    <Stack gap={4}>
+      {entries.map(([key, value]) => (
+        <Group key={key} gap="xs">
+          <Text size="sm" fw={600} c="dimmed" style={{ textTransform: 'capitalize' }}>
+            {key.replace(/_/g, ' ')}:
+          </Text>
+          <Text size="sm">
+            {typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value)}
+          </Text>
+        </Group>
+      ))}
+    </Stack>
+  );
 };
