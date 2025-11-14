@@ -1,139 +1,53 @@
-<!-- TOC -->
-
-* [Surmai](#surmai)
-* [Features](#features)
-* [Rationale](#rationale)
-* [Mobile Apps](#mobile-apps)
-* [Screenshots / Screencasts](#screenshots--screencasts)
-* [Demo](#demo)
-* [Installation](#installation)
-* [Credits](#credits)
-    * [PocketBase](#pocketbase)
-    * [Mantine](#mantine)
-    * [Icon](#icon)
-    * [Data](#data)
-* [Possibly FAQ](#possibly-faq)
-    * [Why so ugly tho?](#why-so-ugly-tho)
-    * [Why not use ${other_thing}?](#why-not-use-other_thing)
-
-<!-- TOC -->
+**Fork Notice:** This repository is a fork of the original `surmai` project. See the project's documentation
+for full installation and usage details.
 
 # Surmai
 
-Surmai is a personal/family travel organizer.
-The app is built to solve 3 particular challenges while planning a trip:
+Surmai is a travel organizer web application focused on collaborative trip planning, offline access, and privacy-aware
+data storage. It provides features for organizing trip details, collaborating with others, and keeping travel artifacts in one place.
 
-1. Allow collaborative planning between multiple people.
-2. Allow easy access to all the necessary artifacts during the course of the trip.
-3. Keep the data private.
+## Features
 
-NOTE: This is a very very alpha stage project and under active development. Please report any issues using Github
-Issues.
+- Organize trip information in one place
+- Collaboration support for multiple users
+- Offline access and mobile-friendly UI
+- Privacy-first data handling
+- Optional AI-powered itinerary assistance
 
-# Features
+## Mobile / PWA
 
-- Organize a trip in one place
-- Allow collaboration between multiple users
-- Offline access
-- Privacy
-- Mobile friendly
-- AI-powered itinerary assistant (OpenAI Responses API)
+Surmai is implemented as a Progressive Web App (PWA) and can be installed on many mobile platforms. For general PWA
+information see the MDN guide: https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/What_is_a_progressive_web_app
 
-# Rationale
+## Demo
 
-As avid travellers, we (me & SO) split up the planning tasks e.g. booking plane tickets and
-making dinner reservations etc, with the receipts / confirmation emails being in our own
-respective inboxes. These emails were tagged but were not necessarily organized chronologically.
-It was also a huge pain to find the right email at the right time, especially
-given some low bandwidth connections.
+A public demo instance may be available at https://demo.surmai.app/ (if present, the demo site is managed by the project maintainers and may be reset periodically). No personal demo credentials are published in this forked copy.
 
-I've been a Backend software engineer for the last ~20 years. My last professional interaction with Javascript was
-pre jQuery days when Internet Explorer 5 demanded we test the `navigator` every time something was to be written. I have
-been exposed to the "new" Javascript at my current job as a necessity and decided to use this project as a learning
-opportunity.
+## Installation
 
-# Mobile Apps
+See the project's documentation for installation and deployment instructions, including Docker-based setups:
+http://surmai.app/documentation/installation
 
-Surmai is built as
-a [Progressive Web App](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/What_is_a_progressive_web_app).
-It's possible
-to install it as a regular app on mobile
-phones. [Installation Instructions](https://support.google.com/chrome/answer/9658361?hl=en&co=GENIE.Platform%3DAndroid&oco=1)
+### AI itinerary assistant setup (optional)
 
-# Screenshots / Screencasts
-
-Can be seen at http://surmai.app/documentation/screenshots
-
-# Demo
-
-A demo is available at https://demo.surmai.app/
-
-Demo Account:
-
-Email: `demo@surmai.app`
-
-Password: `vi#c8Euuf16idhbG`
-
-Feel free to create an account and explore.
-
-NOTE: The demo site is cleaned up every hour.
-
-# Installation
-
-Installation guide with Docker and a potential backup solution can be found in the documentation
- http://surmai.app/documentation/installation
-
-## AI itinerary assistant setup
-
-The trip assistant tab relies on the OpenAI Responses API (`gpt-5-mini`). Set the `OPENAI_API_KEY` environment variable for
-the backend service (PocketBase wrapper) before starting it:
+The optional trip assistant feature relies on an external API and requires an API key. If you enable that feature set the required environment variable for your deployment. For example (POSIX shells):
 
 ```bash
 export OPENAI_API_KEY=sk-your-key
 ```
 
-The key must have access to the Responses API. The frontend does not need access to this secret because all calls are proxied through the authenticated PocketBase route.
+Ensure your key has access to the API you intend to use. The frontend should not directly expose secrets — proxy such
+requests through the authenticated backend.
 
-# Credits
+## Credits
 
-## PocketBase
+This project integrates several open-source tools and datasets. Notable mentions:
 
-Surmai uses [PocketBase](https://pocketbase.io/) as it's backend platform. The API is great and the documentation is
-first-class. The PocketBase Admin UI also allows for configuration that is not available from within Surmai (yet).
+- Backend platform: PocketBase (https://pocketbase.io/)
+- UI library: Mantine (https://mantine.dev/)
+- Airport data: OurAirports (https://ourairports.com/data/)
+- City data: countries-states-cities-database (https://github.com/dr5hn/countries-states-cities-database)
+- Airlines dataset: dotmarn/Airlines (https://github.com/dotmarn/Airlines)
+- Currency data: ExchangeRate-APIs (https://www.exchangerate-api.com/docs/free)
 
-## Mantine
-
-Surmai is a React based SPA built using the absolutely phenomenal library [Mantine](https://mantine.dev/). Vite for
-building and prettier for formatting.
-
-## Icon
-
-[Fish SVG Vector](https://www.svgrepo.com/svg/280960/fish)
-
-## Data
-
-### Airports
-
-From [OurAirports](https://ourairports.com/data/)
-
-### Cities
-
-From [countries-states-cities-database](https://github.com/dr5hn/countries-states-cities-database)
-
-### Airlines
-
-From [dotmarn/Airlines](https://github.com/dotmarn/Airlines)
-
-### Currency Conversion
-
-From ExchangeRate-APIs [open acces endpoint](https://www.exchangerate-api.com/docs/free)
-
-# Possibly FAQ
-
-### Why so ugly tho?
-
-~20 years as a backend dev, I have a tendency to lean towards function over form.
-
-### Why not use ${other_thing}?
-
-I wanted to learn React/Typescript, that's about it. So many side projects have languished because I gave up when it came to building the UI. I wanted this one to be different.
+If you need additional information from the original repository, consult the upstream project.
