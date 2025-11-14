@@ -976,7 +976,7 @@ func formatDate(dt pbtypes.DateTime) string {
 	if dt.IsZero() {
 		return ""
 	}
-	return dt.Time().UTC().Format(time.RFC3339)
+	return dt.Time().Format("2006-01-02T15:04:05")
 }
 
 func buildResponsesInput(messages []assistantMessage, ctx *tripAssistantContext) ([]map[string]interface{}, error) {
