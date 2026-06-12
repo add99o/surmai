@@ -51,6 +51,21 @@
   text-decoration: underline;
 }
 
+.sourcesList {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 0.5rem;
+}
+
+.sourcesList a {
+  color: var(--mantine-primary-color-filled);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
+[data-mantine-color-scheme='light'] .sourcesList {
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+
 .chatBubble {
   border-radius: 14px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);

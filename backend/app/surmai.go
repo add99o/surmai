@@ -69,6 +69,9 @@ func (surmai *SurmaiApp) BindRoutes() {
 		tripRoutes.POST("/save-activity", R.SaveActivity)
 		tripRoutes.POST("/assistant", R.TripAssistant)
 		tripRoutes.POST("/assistant/stream", R.TripAssistantStream)
+		tripRoutes.GET("/assistant/messages", R.ListTripAssistantMessages)
+		tripRoutes.POST("/assistant/messages", R.CreateTripAssistantMessage)
+		tripRoutes.DELETE("/assistant/messages", R.ClearTripAssistantMessages)
 		tripRoutes.POST("/assistant/proposals/{proposalId}/decision", R.AssistantProposalDecision)
 
 		// General Utility Routes

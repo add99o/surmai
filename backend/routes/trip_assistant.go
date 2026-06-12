@@ -35,6 +35,25 @@ type tripAssistantResponse struct {
 	Message assistantMessage `json:"message"`
 }
 
+type tripAssistantStoredMessage struct {
+	Id       string                 `json:"id"`
+	Role     string                 `json:"role"`
+	Content  string                 `json:"content"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	Created  string                 `json:"created"`
+}
+
+type tripAssistantMessageRequest struct {
+	Role     string                 `json:"role"`
+	Content  string                 `json:"content"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type assistantSource struct {
+	Title string `json:"title,omitempty"`
+	URL   string `json:"url"`
+}
+
 type tripAssistantContext struct {
 	Trip            basicTrip               `json:"trip"`
 	Notes           string                  `json:"notes,omitempty"`
@@ -161,7 +180,11 @@ var proposalStore = struct {
 
 const (
 	openAIResponsesEndpoint = "https://api.openai.com/v1/responses"
-	openAIModel             = "gpt-5-mini"
+	openAIModel             = "gpt-5.4-mini"
+	tripAssistantModel      = openAIModel
+	tripAssistantReasoning  = "low"
+	tripAssistantVerbosity  = "low"
+	tripAssistantMaxHistory = 30
 )
 
 func TripAssistant(e *core.RequestEvent) error {
@@ -170,6 +193,11 @@ func TripAssistant(e *core.RequestEvent) error {
 		return e.JSON(http.StatusServiceUnavailable, map[string]string{
 			"error": "OPENAI_API_KEY is not configured on the server",
 		})
+	}
+
+	info, err := e.RequestInfo()
+	if err != nil {
+		return err
 	}
 
 	var req tripAssistantRequest
@@ -197,6 +225,9 @@ func TripAssistant(e *core.RequestEvent) error {
 		return e.JSON(http.StatusBadRequest, map[string]string{
 			"error": "unable to read trip info",
 		})
+	}
+	if err := requireTripAssistantUpdateAccess(e, tripRecord, info); err != nil {
+		return err
 	}
 
 	ctx, err := buildTripAssistantContext(e.App, tripRecord)
@@ -223,6 +254,10 @@ func TripAssistant(e *core.RequestEvent) error {
 		})
 	}
 
+	if err := saveTripAssistantMessage(e.App, tripRecord.Id, info.Auth.Id, "assistant", reply, nil); err != nil {
+		e.App.Logger().Warn("TripAssistant failed to persist reply", "error", err, "tripId", tripRecord.Id)
+	}
+
 	return e.JSON(http.StatusOK, tripAssistantResponse{
 		Message: assistantMessage{
 			Role:    "assistant",
@@ -231,12 +266,187 @@ func TripAssistant(e *core.RequestEvent) error {
 	})
 }
 
+func ListTripAssistantMessages(e *core.RequestEvent) error {
+	tripRecord, err := tripRecordFromRequest(e)
+	if err != nil {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	info, err := e.RequestInfo()
+	if err != nil {
+		return err
+	}
+	if err := requireTripAssistantUpdateAccess(e, tripRecord, info); err != nil {
+		return err
+	}
+
+	records, err := e.App.FindAllRecords(
+		"trip_assistant_messages",
+		dbx.NewExp("trip = {:tripId} and user = {:userId}", dbx.Params{"tripId": tripRecord.Id, "userId": info.Auth.Id}),
+	)
+	if err != nil {
+		return e.JSON(http.StatusInternalServerError, map[string]string{"error": "unable to load assistant messages"})
+	}
+
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].GetDateTime("created").Time().Before(records[j].GetDateTime("created").Time())
+	})
+
+	messages := make([]tripAssistantStoredMessage, 0, len(records))
+	for _, record := range records {
+		messages = append(messages, storedMessageFromRecord(record))
+	}
+
+	return e.JSON(http.StatusOK, map[string]interface{}{"messages": messages})
+}
+
+func CreateTripAssistantMessage(e *core.RequestEvent) error {
+	tripRecord, err := tripRecordFromRequest(e)
+	if err != nil {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	info, err := e.RequestInfo()
+	if err != nil {
+		return err
+	}
+	if err := requireTripAssistantUpdateAccess(e, tripRecord, info); err != nil {
+		return err
+	}
+
+	var req tripAssistantMessageRequest
+	if err := json.NewDecoder(e.Request.Body).Decode(&req); err != nil {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+
+	if req.Role != "user" {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": "only user messages can be created from the client"})
+	}
+
+	if strings.TrimSpace(req.Content) == "" {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": "content is required"})
+	}
+
+	record, err := createTripAssistantMessage(e.App, tripRecord.Id, info.Auth.Id, req.Role, req.Content, nil)
+	if err != nil {
+		return e.JSON(http.StatusInternalServerError, map[string]string{"error": "unable to save assistant message"})
+	}
+
+	return e.JSON(http.StatusOK, map[string]interface{}{"message": storedMessageFromRecord(record)})
+}
+
+func ClearTripAssistantMessages(e *core.RequestEvent) error {
+	tripRecord, err := tripRecordFromRequest(e)
+	if err != nil {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	info, err := e.RequestInfo()
+	if err != nil {
+		return err
+	}
+	if err := requireTripAssistantUpdateAccess(e, tripRecord, info); err != nil {
+		return err
+	}
+
+	records, err := e.App.FindAllRecords(
+		"trip_assistant_messages",
+		dbx.NewExp("trip = {:tripId} and user = {:userId}", dbx.Params{"tripId": tripRecord.Id, "userId": info.Auth.Id}),
+	)
+	if err != nil {
+		return e.JSON(http.StatusInternalServerError, map[string]string{"error": "unable to load assistant messages"})
+	}
+
+	for _, record := range records {
+		if err := e.App.Delete(record); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "unable to clear assistant messages"})
+		}
+	}
+
+	return e.JSON(http.StatusOK, map[string]interface{}{"deleted": len(records)})
+}
+
+func tripRecordFromRequest(e *core.RequestEvent) (*core.Record, error) {
+	tripVal := e.Get("trip")
+	if tripVal == nil {
+		return nil, errors.New("trip context is missing")
+	}
+
+	tripRecord, ok := tripVal.(*core.Record)
+	if !ok {
+		return nil, errors.New("unable to read trip info")
+	}
+
+	return tripRecord, nil
+}
+
+func createTripAssistantMessage(app core.App, tripID, userID, role, content string, metadata map[string]interface{}) (*core.Record, error) {
+	collection, err := app.FindCollectionByNameOrId("trip_assistant_messages")
+	if err != nil {
+		return nil, err
+	}
+
+	record := core.NewRecord(collection)
+	record.Set("trip", tripID)
+	record.Set("user", userID)
+	record.Set("role", role)
+	record.Set("content", strings.TrimSpace(content))
+	if len(metadata) > 0 {
+		record.Set("metadata", metadata)
+	}
+
+	if err := app.Save(record); err != nil {
+		return nil, err
+	}
+
+	return record, nil
+}
+
+func saveTripAssistantMessage(app core.App, tripID, userID, role, content string, metadata map[string]interface{}) error {
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+	_, err := createTripAssistantMessage(app, tripID, userID, role, content, metadata)
+	return err
+}
+
+func storedMessageFromRecord(record *core.Record) tripAssistantStoredMessage {
+	metadata := mapValue(record.Get("metadata"))
+	if len(metadata) == 0 {
+		metadata = nil
+	}
+
+	return tripAssistantStoredMessage{
+		Id:       record.Id,
+		Role:     record.GetString("role"),
+		Content:  record.GetString("content"),
+		Metadata: metadata,
+		Created:  record.GetDateTime("created").Time().Format(time.RFC3339),
+	}
+}
+
+func requireTripAssistantUpdateAccess(e *core.RequestEvent, tripRecord *core.Record, info *core.RequestInfo) error {
+	canUpdate, err := e.App.CanAccessRecord(tripRecord, info, tripRecord.Collection().UpdateRule)
+	if err != nil {
+		return err
+	}
+	if !canUpdate {
+		return e.ForbiddenError("Assistant access requires edit access to this trip", nil)
+	}
+	return nil
+}
+
 func TripAssistantStream(e *core.RequestEvent) error {
 	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	if apiKey == "" {
 		return e.JSON(http.StatusServiceUnavailable, map[string]string{
 			"error": "OPENAI_API_KEY is not configured on the server",
 		})
+	}
+
+	info, err := e.RequestInfo()
+	if err != nil {
+		return err
 	}
 
 	var req tripAssistantRequest
@@ -264,6 +474,9 @@ func TripAssistantStream(e *core.RequestEvent) error {
 		return e.JSON(http.StatusBadRequest, map[string]string{
 			"error": "unable to read trip info",
 		})
+	}
+	if err := requireTripAssistantUpdateAccess(e, tripRecord, info); err != nil {
+		return err
 	}
 
 	ctx, err := buildTripAssistantContext(e.App, tripRecord)
@@ -294,7 +507,7 @@ func TripAssistantStream(e *core.RequestEvent) error {
 	writer.Header().Set("Cache-Control", "no-cache")
 	writer.Header().Set("Connection", "keep-alive")
 
-	if err := streamResponsesToClient(e.Request.Context(), writer, flusher, apiKey, tripRecord.Id, responseInput); err != nil {
+	if err := streamResponsesToClient(e.Request.Context(), e.App, writer, flusher, apiKey, tripRecord.Id, info.Auth.Id, responseInput); err != nil {
 		e.App.Logger().Error("TripAssistant stream failed", "error", err, "tripId", tripRecord.Id)
 		sendSSEEvent(writer, flusher, map[string]string{
 			"type":    "error",
@@ -315,6 +528,14 @@ func AssistantProposalDecision(e *core.RequestEvent) error {
 		return e.JSON(http.StatusBadRequest, map[string]string{"error": "trip context missing"})
 	}
 	tripRecord := tripVal.(*core.Record)
+
+	info, err := e.RequestInfo()
+	if err != nil {
+		return err
+	}
+	if err := requireTripAssistantUpdateAccess(e, tripRecord, info); err != nil {
+		return err
+	}
 
 	proposalID := e.Request.PathValue("proposalId")
 	if proposalID == "" {
@@ -346,22 +567,33 @@ func AssistantProposalDecision(e *core.RequestEvent) error {
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
+		if err := saveTripAssistantMessage(e.App, tripRecord.Id, info.Auth.Id, "assistant", message, nil); err != nil {
+			e.App.Logger().Warn("TripAssistant failed to persist proposal approval", "error", err, "tripId", tripRecord.Id)
+		}
 		popAssistantProposal(proposalID)
 		return e.JSON(http.StatusOK, map[string]string{
 			"status":  "approved",
 			"message": message,
 		})
 	case "decline":
+		message := "Okay, I will skip that change."
+		if err := saveTripAssistantMessage(e.App, tripRecord.Id, info.Auth.Id, "assistant", message, nil); err != nil {
+			e.App.Logger().Warn("TripAssistant failed to persist proposal decline", "error", err, "tripId", tripRecord.Id)
+		}
 		popAssistantProposal(proposalID)
 		return e.JSON(http.StatusOK, map[string]string{
 			"status":  "declined",
-			"message": "Okay, I will skip that change.",
+			"message": message,
 		})
 	case "timeout":
+		message := "The request expired. Ask again if you'd like me to re-create it."
+		if err := saveTripAssistantMessage(e.App, tripRecord.Id, info.Auth.Id, "assistant", message, nil); err != nil {
+			e.App.Logger().Warn("TripAssistant failed to persist proposal timeout", "error", err, "tripId", tripRecord.Id)
+		}
 		popAssistantProposal(proposalID)
 		return e.JSON(http.StatusOK, map[string]string{
 			"status":  "timeout",
-			"message": "The request expired. Ask again if you'd like me to re-create it.",
+			"message": message,
 		})
 	default:
 		return e.JSON(http.StatusBadRequest, map[string]string{"error": "decision must be approve, decline, or timeout"})
@@ -985,15 +1217,21 @@ func buildResponsesInput(messages []assistantMessage, ctx *tripAssistantContext)
 		return nil, err
 	}
 
-	systemPrompt := "You are Surmai's AI-powered itinerary assistant. Use the trip context to answer questions, reference actual plans, and offer proactive suggestions when helpful. Keep answers concise, organized, and grounded in the provided data unless the user explicitly asks for speculation. Answers given should be easy to understand, instead of using 24hr time format, opt to use 12hr time format instead with AM/PM, any times you see, edit, or add in the trip context information or new entries will read as for the user. For dates use the format MM-DD and do not include the year. When the traveler asks you to add, adjust, or remove something, call the matching function (create/update/delete activity/lodging/transportation). Always include the record_id from the trip context when editing or deleting. Never assume the change is saved until the traveler approves it, and mention any assumptions you make when inferring missing details."
-	contextPrompt := fmt.Sprintf("Latest trip context:\n%s", string(ctxJSON))
+	systemPrompt := strings.Join([]string{
+		"You are Surmai's trip assistant.",
+		"Answer from the provided trip context first. If current external facts are needed, such as hours, closures, venue availability, weather, or recent disruption, use web search and cite sources.",
+		"Keep replies concise and easy to scan. Use 12-hour times with AM/PM and dates as MM-DD unless the user asks for more detail.",
+		"For itinerary changes, call the matching create/update/delete tool. Always use record_id for edits/deletes. The change is only proposed until the traveler approves it.",
+		"State assumptions when you infer missing details.",
+	}, " ")
+	contextPrompt := fmt.Sprintf("Latest trip context JSON:\n%s", string(ctxJSON))
 
 	input := []map[string]interface{}{
 		newResponsesTextBlock("developer", systemPrompt),
 		newResponsesTextBlock("developer", contextPrompt),
 	}
 
-	for _, message := range messages {
+	for _, message := range compactAssistantHistory(messages) {
 		if message.Content == "" {
 			continue
 		}
@@ -1005,6 +1243,13 @@ func buildResponsesInput(messages []assistantMessage, ctx *tripAssistantContext)
 	}
 
 	return input, nil
+}
+
+func compactAssistantHistory(messages []assistantMessage) []assistantMessage {
+	if len(messages) <= tripAssistantMaxHistory {
+		return messages
+	}
+	return messages[len(messages)-tripAssistantMaxHistory:]
 }
 
 func newResponsesTextBlock(role, text string) map[string]interface{} {
@@ -1026,17 +1271,18 @@ func newResponsesTextBlock(role, text string) map[string]interface{} {
 
 func invokeResponsesAPI(ctx context.Context, apiKey string, input []map[string]interface{}) (string, error) {
 	payload := map[string]interface{}{
-		"model": openAIModel,
+		"model": tripAssistantModel,
 		"input": input,
 		"reasoning": map[string]string{
-			"effort": "low",
+			"effort": tripAssistantReasoning,
 		},
 		"text": map[string]string{
-			"verbosity": "low",
+			"verbosity": tripAssistantVerbosity,
 		},
 		"tools":       buildAssistantTools(),
 		"tool_choice": "auto",
 		"include":     []string{"web_search_call.action.sources"},
+		"store":       false,
 	}
 
 	body, err := json.Marshal(payload)
@@ -1083,28 +1329,34 @@ func invokeResponsesAPI(ctx context.Context, apiKey string, input []map[string]i
 
 func streamResponsesToClient(
 	ctx context.Context,
+	app core.App,
 	writer http.ResponseWriter,
 	flusher http.Flusher,
 	apiKey string,
 	tripID string,
+	userID string,
 	input []map[string]interface{},
 ) error {
 	callBuffer := &functionCallBuffer{}
 	proposalIssued := false
+	var assistantText strings.Builder
+	sources := make([]assistantSource, 0)
+	sourceKeys := map[string]bool{}
 
 	payload := map[string]interface{}{
-		"model": openAIModel,
+		"model": tripAssistantModel,
 		"input": input,
 		"reasoning": map[string]string{
-			"effort": "low",
+			"effort": tripAssistantReasoning,
 		},
 		"text": map[string]string{
-			"verbosity": "low",
+			"verbosity": tripAssistantVerbosity,
 		},
 		"tools":       buildAssistantTools(),
 		"tool_choice": "auto",
 		"include":     []string{"web_search_call.action.sources"},
 		"stream":      true,
+		"store":       false,
 	}
 
 	body, err := json.Marshal(payload)
@@ -1155,6 +1407,14 @@ func streamResponsesToClient(
 		}
 
 		eventType, _ := event["type"].(string)
+		if newSources := extractAssistantSources(event, sourceKeys); len(newSources) > 0 {
+			sources = append(sources, newSources...)
+			sendSSEEvent(writer, flusher, map[string]interface{}{
+				"type":    "sources",
+				"sources": newSources,
+			})
+		}
+
 		switch eventType {
 		case "response.output_item.added":
 			item, _ := event["item"].(map[string]interface{})
@@ -1169,18 +1429,36 @@ func streamResponsesToClient(
 			}
 			if proposalPayload, ok := callBuffer.finalizeProposal(event, tripID); ok {
 				proposalIssued = true
+				if proposal, ok := proposalPayload["proposal"].(map[string]interface{}); ok {
+					if summary := stringValue(proposal["summary"]); summary != "" {
+						metadata := map[string]interface{}{
+							"proposal": proposal,
+						}
+						if err := saveTripAssistantMessage(app, tripID, userID, "assistant", summary, metadata); err != nil {
+							app.Logger().Warn("TripAssistant failed to persist proposal", "error", err, "tripId", tripID)
+						}
+					}
+				}
 				sendSSEEvent(writer, flusher, proposalPayload)
 				return nil
 			}
 		case "response.output_text.delta":
 			delta, _ := event["delta"].(string)
 			if delta != "" {
+				assistantText.WriteString(delta)
 				sendSSEEvent(writer, flusher, map[string]string{
 					"type": "delta",
 					"text": delta,
 				})
 			}
 		case "response.completed":
+			metadata := map[string]interface{}{}
+			if len(sources) > 0 {
+				metadata["sources"] = sources
+			}
+			if err := saveTripAssistantMessage(app, tripID, userID, "assistant", assistantText.String(), metadata); err != nil {
+				app.Logger().Warn("TripAssistant failed to persist stream reply", "error", err, "tripId", tripID)
+			}
 			sendSSEEvent(writer, flusher, map[string]string{
 				"type": "done",
 			})
@@ -1220,6 +1498,52 @@ func sendSSEEvent(writer http.ResponseWriter, flusher http.Flusher, payload inte
 	_, _ = writer.Write(data)
 	_, _ = writer.Write([]byte("\n\n"))
 	flusher.Flush()
+}
+
+func extractAssistantSources(value interface{}, seen map[string]bool) []assistantSource {
+	sources := make([]assistantSource, 0)
+
+	var walk func(interface{})
+	walk = func(v interface{}) {
+		switch current := v.(type) {
+		case map[string]interface{}:
+			if url := sourceURL(current); url != "" && !seen[url] {
+				seen[url] = true
+				sources = append(sources, assistantSource{
+					Title: sourceTitle(current),
+					URL:   url,
+				})
+			}
+			for _, child := range current {
+				walk(child)
+			}
+		case []interface{}:
+			for _, child := range current {
+				walk(child)
+			}
+		}
+	}
+
+	walk(value)
+	return sources
+}
+
+func sourceURL(source map[string]interface{}) string {
+	for _, key := range []string{"url", "uri", "link"} {
+		if url := strings.TrimSpace(stringValue(source[key])); url != "" && strings.HasPrefix(url, "http") {
+			return url
+		}
+	}
+	return ""
+}
+
+func sourceTitle(source map[string]interface{}) string {
+	for _, key := range []string{"title", "name", "text"} {
+		if title := strings.TrimSpace(stringValue(source[key])); title != "" {
+			return title
+		}
+	}
+	return ""
 }
 
 func buildAssistantTools() []map[string]interface{} {
@@ -1314,14 +1638,15 @@ func assistantFunctionTools() []map[string]interface{} {
 		{
 			"type":        "function",
 			"name":        assistantToolDeleteActivity,
+			"strict":      true,
 			"description": "Delete an existing activity by record_id when the traveler asks to remove it.",
 			"parameters": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"record_id": map[string]interface{}{"type": "string"},
-					"reason":    map[string]interface{}{"type": "string", "description": "Optional reason/reminder"},
+					"reason":    map[string]interface{}{"type": []string{"string", "null"}, "description": "Optional reason/reminder"},
 				},
-				"required":             []string{"record_id"},
+				"required":             []string{"record_id", "reason"},
 				"additionalProperties": false,
 			},
 		},
@@ -1333,7 +1658,7 @@ func assistantFunctionTools() []map[string]interface{} {
 				"type": "object",
 				"properties": map[string]interface{}{
 					"name":       map[string]interface{}{"type": "string", "description": "Property name"},
-					"type":       map[string]interface{}{"type": "string", "description": "Lodging type (hotel, rental, etc.)"},
+					"type":       map[string]interface{}{"type": "string", "enum": []string{"hotel", "home", "vacation_rental", "camp_site"}, "description": "Lodging type"},
 					"address":    map[string]interface{}{"type": "string", "description": "Address or area"},
 					"start_time": map[string]interface{}{"type": "string", "description": "Check-in time/date in RFC3339"},
 					"end_time":   map[string]interface{}{"type": "string", "description": "Check-out time/date in RFC3339"},
@@ -1370,14 +1695,15 @@ func assistantFunctionTools() []map[string]interface{} {
 		{
 			"type":        "function",
 			"name":        assistantToolDeleteLodging,
+			"strict":      true,
 			"description": "Delete an existing lodging entry.",
 			"parameters": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"record_id": map[string]interface{}{"type": "string"},
-					"reason":    map[string]interface{}{"type": "string"},
+					"reason":    map[string]interface{}{"type": []string{"string", "null"}},
 				},
-				"required":             []string{"record_id"},
+				"required":             []string{"record_id", "reason"},
 				"additionalProperties": false,
 			},
 		},
@@ -1388,7 +1714,7 @@ func assistantFunctionTools() []map[string]interface{} {
 			"parameters": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"type":        map[string]interface{}{"type": "string", "description": "Transportation type, e.g., flight, train"},
+					"type":        map[string]interface{}{"type": "string", "enum": []string{"flight", "car", "bus", "boat", "train", "rental_car", "bike", "parking"}, "description": "Transportation type"},
 					"provider":    map[string]interface{}{"type": "string", "description": "Carrier or provider"},
 					"origin":      map[string]interface{}{"type": "string", "description": "Origin city or location"},
 					"destination": map[string]interface{}{"type": "string", "description": "Destination city or location"},
@@ -1429,14 +1755,15 @@ func assistantFunctionTools() []map[string]interface{} {
 		{
 			"type":        "function",
 			"name":        assistantToolDeleteTransportation,
+			"strict":      true,
 			"description": "Delete a transportation entry by record_id.",
 			"parameters": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"record_id": map[string]interface{}{"type": "string"},
-					"reason":    map[string]interface{}{"type": "string"},
+					"reason":    map[string]interface{}{"type": []string{"string", "null"}},
 				},
-				"required":             []string{"record_id"},
+				"required":             []string{"record_id", "reason"},
 				"additionalProperties": false,
 			},
 		},

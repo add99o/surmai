@@ -81,6 +81,8 @@ export const ViewTrip = () => {
     key: `offline-cache-timestamp-${tripId}`,
   });
 
+  const canUseAssistant = !!trip?.canUpdate;
+
   const tabs = [
     {
       key: 'organization',
@@ -102,10 +104,14 @@ export const ViewTrip = () => {
       key: 'notes',
       value: t('notes', 'Notes'),
     },
-    {
-      key: 'assistant',
-      value: t('assistant_tab', 'AI Assistant'),
-    },
+    ...(canUseAssistant
+      ? [
+          {
+            key: 'assistant',
+            value: t('assistant_tab', 'AI Assistant'),
+          },
+        ]
+      : []),
   ];
 
   const { hash } = useLocation();
@@ -228,7 +234,7 @@ export const ViewTrip = () => {
         <Tabs.Panel value="notes">
           <TripNotes refetch={refetchTrip} trip={trip} />
         </Tabs.Panel>
-        {trip && (
+        {trip && canUseAssistant && (
           <Tabs.Panel value="assistant">
             <TripAssistant trip={trip} />
           </Tabs.Panel>

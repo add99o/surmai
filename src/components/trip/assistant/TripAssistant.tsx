@@ -1,16 +1,17 @@
 import { Alert, Box, Button, Group, Loader, Paper, Stack, Text, Textarea, rem } from '@mantine/core';
-import { IconAlertCircle, IconSend } from '@tabler/icons-react';
+import { IconAlertCircle, IconSend, IconTrash } from '@tabler/icons-react';
 import { nanoid } from 'nanoid';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import DOMPurify from 'dompurify';
 import dayjs from 'dayjs';
 
+import { clearTripAssistantMessages, createTripAssistantMessage, listTripAssistantMessages } from '../../../lib/api';
 import { pb } from '../../../lib/api/pocketbase/pocketbase.ts';
 import { formatDate } from '../../../lib/time.ts';
 import classes from './TripAssistant.module.css';
 
-import type { AssistantMessage } from '../../../types/assistant.ts';
+import type { AssistantMessage, AssistantSource } from '../../../types/assistant.ts';
 import type { Trip } from '../../../types/trips.ts';
 
 type TripAssistantProps = {
@@ -34,6 +35,7 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [pendingProposal, setPendingProposal] = useState<AssistantProposal | null>(null);
   const [proposalCountdown, setProposalCountdown] = useState<number>(0);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -53,10 +55,35 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
 
   useEffect(() => {
-    setMessages([]);
+    let ignore = false;
     setError(null);
     setInput('');
-  }, [introMessage, trip.id]);
+    setPendingProposal(null);
+    setIsLoadingMessages(true);
+
+    listTripAssistantMessages(trip.id)
+      .then((storedMessages) => {
+        if (!ignore) {
+          setMessages(storedMessages);
+        }
+      })
+      .catch((err) => {
+        if (!ignore) {
+          const fallback = t('assistant_history_load_failed', 'Unable to load assistant history.');
+          setError(resolveAssistantError(err, fallback));
+          setMessages([]);
+        }
+      })
+      .finally(() => {
+        if (!ignore) {
+          setIsLoadingMessages(false);
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [t, trip.id]);
 
   useEffect(() => {
     const el = viewportRef.current;
@@ -120,8 +147,17 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
       content: '',
     };
 
-    const nextConversation = [...messages, userMessage];
-    setMessages((prev) => [...prev, userMessage, assistantPlaceholder]);
+    let savedUserMessage = userMessage;
+    try {
+      savedUserMessage = await createTripAssistantMessage(trip.id, userMessage);
+    } catch (err) {
+      const fallback = t('assistant_history_save_failed', 'Unable to save your message.');
+      setError(resolveAssistantError(err, fallback));
+      return;
+    }
+
+    const nextConversation = [...messages, savedUserMessage];
+    setMessages((prev) => [...prev, savedUserMessage, assistantPlaceholder]);
     setInput('');
     setError(null);
 
@@ -174,7 +210,7 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
             setPendingProposal(proposal);
             setMessages((prev) =>
               prev.map((message) =>
-                message.role === 'assistant' && message.content === ''
+                message.id === assistantId
                   ? { ...message, content: proposal.summary }
                   : message
               )
@@ -184,6 +220,8 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
           }
           if (event.type === 'delta' && event.text) {
             appendAssistantText(assistantId, event.text);
+          } else if (event.type === 'sources' && Array.isArray(event.sources)) {
+            appendAssistantSources(assistantId, event.sources as AssistantSource[]);
           } else if (event.type === 'error') {
             throw new Error(event.message || 'Assistant stream failed.');
           } else if (event.type === 'done') {
@@ -197,6 +235,8 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
         for (const event of events) {
           if (event.type === 'delta' && event.text) {
             appendAssistantText(assistantId, event.text);
+          } else if (event.type === 'sources' && Array.isArray(event.sources)) {
+            appendAssistantSources(assistantId, event.sources as AssistantSource[]);
           }
         }
       }
@@ -216,6 +256,30 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
           };
         }
         return message;
+      })
+    );
+  };
+
+  const appendAssistantSources = (assistantId: string, sources: AssistantSource[]) => {
+    setMessages((prev) =>
+      prev.map((message) => {
+        if (message.id !== assistantId) {
+          return message;
+        }
+        const existing = message.metadata?.sources || [];
+        const nextSources = [...existing];
+        sources.forEach((source) => {
+          if (source.url && !nextSources.some((item) => item.url === source.url)) {
+            nextSources.push(source);
+          }
+        });
+        return {
+          ...message,
+          metadata: {
+            ...message.metadata,
+            sources: nextSources,
+          },
+        };
       })
     );
   };
@@ -266,12 +330,39 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
     }
   };
 
+  const handleClearChat = async () => {
+    if (isStreaming) {
+      return;
+    }
+    setError(null);
+    try {
+      await clearTripAssistantMessages(trip.id);
+      setMessages([]);
+      setPendingProposal(null);
+    } catch (err) {
+      const fallback = t('assistant_clear_failed', 'Unable to clear assistant history.');
+      setError(resolveAssistantError(err, fallback));
+    }
+  };
+
   const conversationWithGreeting: AssistantMessage[] = [introMessage, ...messages];
 
   return (
     <Stack gap="md" mt="md">
       <Stack gap={4}>
-        <Text fw={600}>{trip.name}</Text>
+        <Group justify="space-between" align="flex-start">
+          <Text fw={600}>{trip.name}</Text>
+          <Button
+            variant="subtle"
+            color="red"
+            size="xs"
+            leftSection={<IconTrash size={14} />}
+            onClick={handleClearChat}
+            disabled={isStreaming || isLoadingMessages || messages.length === 0}
+          >
+            {t('assistant_clear_chat', 'Clear chat')}
+          </Button>
+        </Group>
         <Text size="sm" c="dimmed">
           {t('assistant_trip_summary', 'Planning window: {{start}} -> {{end}}', {
             start: formatDate(i18n.language, trip.startDate),
@@ -295,6 +386,14 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
       <Paper withBorder={false} radius="lg" p={0} className={classes.chatScroller}>
         <Box ref={viewportRef} style={{ maxHeight: rem(MAX_PREVIEW_HEIGHT), overflowY: 'auto', padding: rem(16) }}>
           <Stack gap="sm">
+            {isLoadingMessages && (
+              <Group gap="xs">
+                <Loader size="sm" />
+                <Text size="sm" c="dimmed">
+                  {t('assistant_history_loading', 'Loading assistant history...')}
+                </Text>
+              </Group>
+            )}
             {conversationWithGreeting.map((message) => (
               <Paper
                 key={message.id}
@@ -316,6 +415,20 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
                   className={classes.messageBody}
                   dangerouslySetInnerHTML={{ __html: sanitizeMarkdown(message.content) }}
                 />
+                {message.metadata?.sources && message.metadata.sources.length > 0 && (
+                  <Stack gap={4} mt="xs" className={classes.sourcesList}>
+                    <Text size="xs" fw={700}>
+                      {t('assistant_sources', 'Sources')}
+                    </Text>
+                    {message.metadata.sources.map((source) => (
+                      <Text key={source.url} size="xs">
+                        <a href={source.url} target="_blank" rel="noreferrer">
+                          {source.title || source.url}
+                        </a>
+                      </Text>
+                    ))}
+                  </Stack>
+                )}
               </Paper>
             ))}
             {isStreaming && (
