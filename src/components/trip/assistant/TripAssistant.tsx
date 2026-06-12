@@ -1,5 +1,5 @@
-import { Alert, Box, Button, Group, Loader, Paper, Stack, Text, Textarea, rem } from '@mantine/core';
-import { IconAlertCircle, IconSend, IconTrash } from '@tabler/icons-react';
+import { ActionIcon, Alert, Box, Button, Group, Loader, Paper, Stack, Text, Textarea, Tooltip } from '@mantine/core';
+import { IconAlertCircle, IconExternalLink, IconSend, IconTrash } from '@tabler/icons-react';
 import { nanoid } from 'nanoid';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -27,8 +27,6 @@ type AssistantProposal = {
 };
 
 type ProposalDecision = 'approve' | 'decline' | 'timeout';
-
-const MAX_PREVIEW_HEIGHT = 420;
 
 export const TripAssistant = ({ trip }: TripAssistantProps) => {
   const { t, i18n } = useTranslation();
@@ -348,20 +346,24 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
   const conversationWithGreeting: AssistantMessage[] = [introMessage, ...messages];
 
   return (
-    <Stack gap="md" mt="md">
-      <Stack gap={4}>
+    <Stack gap="md" mt="md" className={classes.assistantWorkspace}>
+      <Stack gap={4} className={classes.headerBlock}>
         <Group justify="space-between" align="flex-start">
-          <Text fw={600}>{trip.name}</Text>
-          <Button
-            variant="subtle"
-            color="red"
-            size="xs"
-            leftSection={<IconTrash size={14} />}
-            onClick={handleClearChat}
-            disabled={isStreaming || isLoadingMessages || messages.length === 0}
-          >
-            {t('assistant_clear_chat', 'Clear chat')}
-          </Button>
+          <Text fw={600} className={classes.tripTitle}>
+            {trip.name}
+          </Text>
+          <Tooltip label={t('assistant_clear_chat', 'Clear chat')}>
+            <ActionIcon
+              variant="subtle"
+              color="red"
+              size="sm"
+              onClick={handleClearChat}
+              disabled={isStreaming || isLoadingMessages || messages.length === 0}
+              aria-label={t('assistant_clear_chat', 'Clear chat')}
+            >
+              <IconTrash size={16} />
+            </ActionIcon>
+          </Tooltip>
         </Group>
         <Text size="sm" c="dimmed">
           {t('assistant_trip_summary', 'Planning window: {{start}} -> {{end}}', {
@@ -383,8 +385,8 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
         </Alert>
       )}
 
-      <Paper withBorder={false} radius="lg" p={0} className={classes.chatScroller}>
-        <Box ref={viewportRef} style={{ maxHeight: rem(MAX_PREVIEW_HEIGHT), overflowY: 'auto', padding: rem(16) }}>
+      <Paper withBorder={false} p={0} className={classes.chatScroller}>
+        <Box ref={viewportRef} className={classes.chatViewport}>
           <Stack gap="sm">
             {isLoadingMessages && (
               <Group gap="xs">
@@ -400,7 +402,6 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
                 className={`${classes.chatBubble} ${
                   message.role === 'assistant' ? classes.assistantBubble : classes.userBubble
                 }`}
-                style={{ alignSelf: message.role === 'assistant' ? 'flex-start' : 'flex-end', maxWidth: '92%' }}
               >
                 <Text
                   size="xs"
@@ -416,17 +417,19 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
                   dangerouslySetInnerHTML={{ __html: sanitizeMarkdown(message.content) }}
                 />
                 {message.metadata?.sources && message.metadata.sources.length > 0 && (
-                  <Stack gap={4} mt="xs" className={classes.sourcesList}>
+                  <Stack gap={6} mt="xs" className={classes.sourcesList}>
                     <Text size="xs" fw={700}>
                       {t('assistant_sources', 'Sources')}
                     </Text>
-                    {message.metadata.sources.map((source) => (
-                      <Text key={source.url} size="xs">
-                        <a href={source.url} target="_blank" rel="noreferrer">
-                          {source.title || source.url}
+                    <Group gap={6}>
+                      {message.metadata.sources.map((source, index) => (
+                        <a key={source.url} href={source.url} target="_blank" rel="noreferrer" className={classes.sourceChip}>
+                          <span className={classes.sourceIndex}>{index + 1}</span>
+                          <span className={classes.sourceLabel}>{sourceLabel(source)}</span>
+                          <IconExternalLink size={12} />
                         </a>
-                      </Text>
-                    ))}
+                      ))}
+                    </Group>
                   </Stack>
                 )}
               </Paper>
@@ -476,26 +479,32 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
         </Paper>
       )}
 
-      <Stack gap="xs">
+      <Paper withBorder className={classes.composer}>
         <Textarea
           classNames={{ input: classes.inputArea }}
           placeholder={t('assistant_input_placeholder', 'Ask about flights, dinner plans, or request ideas...')}
           minRows={3}
           autosize
+          variant="unstyled"
           value={input}
           onChange={(event) => setInput(event.currentTarget.value)}
           onKeyDown={handleKeyDown}
           disabled={isStreaming}
         />
-        <Group justify="space-between">
+        <Group justify="space-between" align="center" className={classes.composerFooter}>
           <Text size="xs" c="dimmed">
             {t('assistant_input_hint', 'Press Enter to send, Shift+Enter for a new line.')}
           </Text>
-          <Button leftSection={<IconSend size={16} />} onClick={handleSend} disabled={!input.trim() || isStreaming}>
+          <Button
+            size="sm"
+            leftSection={<IconSend size={16} />}
+            onClick={handleSend}
+            disabled={!input.trim() || isStreaming}
+          >
             {t('assistant_send', 'Send')}
           </Button>
         </Group>
-      </Stack>
+      </Paper>
     </Stack>
   );
 };
@@ -676,6 +685,18 @@ const buildAuthHeaders = (): HeadersInit => {
   }
 
   return headers;
+};
+
+const sourceLabel = (source: AssistantSource) => {
+  if (source.title) {
+    return source.title;
+  }
+
+  try {
+    return new URL(source.url).hostname.replace(/^www\./, '');
+  } catch {
+    return source.url;
+  }
 };
 
 const renderProposalDetails = (proposal: AssistantProposal) => {
