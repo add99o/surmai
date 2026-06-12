@@ -1389,6 +1389,7 @@ func streamResponsesToClient(
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	completed := false
+	persistedReply := false
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -1459,6 +1460,7 @@ func streamResponsesToClient(
 			if err := saveTripAssistantMessage(app, tripID, userID, "assistant", assistantText.String(), metadata); err != nil {
 				app.Logger().Warn("TripAssistant failed to persist stream reply", "error", err, "tripId", tripID)
 			}
+			persistedReply = true
 			sendSSEEvent(writer, flusher, map[string]string{
 				"type": "done",
 			})
@@ -1472,6 +1474,16 @@ func streamResponsesToClient(
 				"type":    "error",
 				"message": message,
 			})
+		}
+	}
+
+	if !persistedReply && !proposalIssued && strings.TrimSpace(assistantText.String()) != "" {
+		metadata := map[string]interface{}{}
+		if len(sources) > 0 {
+			metadata["sources"] = sources
+		}
+		if err := saveTripAssistantMessage(app, tripID, userID, "assistant", assistantText.String(), metadata); err != nil {
+			app.Logger().Warn("TripAssistant failed to persist partial stream reply", "error", err, "tripId", tripID)
 		}
 	}
 
