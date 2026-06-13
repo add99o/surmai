@@ -49,7 +49,7 @@ func init() {
 			&core.TextField{Name: "summary"},
 			&core.JSONField{Name: "preview", MaxSize: 20000},
 			&core.JSONField{Name: "sources", MaxSize: 10000},
-			&core.TextField{Name: "sdkState"},
+			&core.TextField{Name: "sdkState", Max: 1000000},
 			&core.JSONField{Name: "sdkInterruptions", MaxSize: 50000},
 			&core.JSONField{Name: "result", MaxSize: 20000},
 			&core.TextField{Name: "error"},
