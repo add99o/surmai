@@ -1,11 +1,14 @@
 .assistantWorkspace {
-  min-height: calc(100vh - 15rem);
+  min-height: calc(100vh - 14rem);
+  max-width: 72rem;
+  margin-inline: auto;
+  width: 100%;
 }
 
 .contextHeader {
-  padding: 1rem;
+  padding: 0.9rem 1rem;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.035);
 }
 
 .headerBlock {
@@ -17,9 +20,9 @@
 }
 
 .messageBody {
-  font-size: 0.875rem;
+  font-size: 0.9rem;
   line-height: 1.5;
-  margin-top: 0.25rem;
+  margin-top: 0.35rem;
 }
 
 .messageBody p {
@@ -145,15 +148,15 @@
 
 .timelineShell {
   flex: 1;
-  min-height: 28rem;
+  min-height: 32rem;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.06);
-  background-color: rgba(0, 0, 0, 0.14);
+  background-color: rgba(0, 0, 0, 0.12);
 }
 
 .timelineViewport {
-  height: clamp(30rem, 58vh, 48rem);
-  padding: 1.25rem;
+  height: clamp(34rem, 62vh, 52rem);
+  padding: 1rem 1.1rem 1.25rem;
 }
 
 .chatViewport {
@@ -166,11 +169,11 @@
 .chatBubble {
   border-radius: 8px;
   box-shadow: none;
-  padding: 0.9rem 1rem;
+  padding: 0.8rem 0.9rem;
 }
 
 .assistantBubble {
-  width: min(82%, 68rem);
+  width: min(78%, 48rem);
   align-self: flex-start;
   background: rgba(255, 255, 255, 0.045);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -178,7 +181,7 @@
 }
 
 .userBubble {
-  max-width: min(70%, 34rem);
+  max-width: min(64%, 34rem);
   align-self: flex-end;
   background: var(--mantine-primary-color-filled-hover);
   border: 1px solid var(--mantine-primary-color-filled);
@@ -221,9 +224,9 @@
 
 .composer {
   flex-shrink: 0;
-  padding: 0.75rem;
-  border-radius: 12px;
-  background-color: rgba(0, 0, 0, 0.18);
+  padding: 0.75rem 0.85rem;
+  border-radius: 8px;
+  background-color: rgba(0, 0, 0, 0.16);
   border-color: rgba(255, 255, 255, 0.08);
 }
 
@@ -255,20 +258,67 @@
 
 .proposalCard {
   border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(0, 0, 0, 0.18);
   border-radius: 8px;
-  padding: 1rem;
+  padding: 0.9rem;
+  width: min(78%, 48rem);
 }
 
 .previewChange {
   border-radius: 8px;
-  padding: 0.75rem;
-  background: rgba(255, 255, 255, 0.035);
+  padding: 0.7rem 0.75rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.proposalHeader {
+  gap: 0.75rem;
+}
+
+.proposalSummary {
+  min-width: 0;
+}
+
+.proposalTitle {
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.proposalDescription {
+  line-height: 1.45;
+}
+
+.proposalExpiry {
+  white-space: nowrap;
+}
+
+.previewTitle {
+  min-width: 0;
+  flex: 1;
+  line-height: 1.35;
+}
+
+.previewFields {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 0.45rem;
+}
+
+.previewFieldRow {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, 8rem) minmax(0, 1fr);
+  gap: 0.5rem;
+}
+
+.previewValue {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .diffRow {
   display: grid;
-  grid-template-columns: minmax(6rem, 10rem) minmax(0, 1fr);
+  grid-template-columns: minmax(5.5rem, 8rem) minmax(0, 1fr);
+  gap: 0.5rem;
 }
 
 .diffValue {
@@ -288,6 +338,10 @@
   border-color: rgba(0, 0, 0, 0.06);
 }
 
+[data-mantine-color-scheme='light'] .previewFields {
+  border-top-color: rgba(0, 0, 0, 0.06);
+}
+
 .proposalCountdown {
   font-weight: 600;
   color: var(--mantine-color-orange-4);
@@ -304,6 +358,7 @@
 @media (max-width: 48em) {
   .assistantWorkspace {
     min-height: auto;
+    max-width: none;
   }
 
   .chatScroller {
@@ -316,8 +371,8 @@
   }
 
   .timelineViewport {
-    height: clamp(22rem, 52vh, 34rem);
-    padding: 0.9rem;
+    height: clamp(26rem, 58vh, 38rem);
+    padding: 0.75rem 0.65rem 0.9rem;
   }
 
   .assistantBubble {
@@ -326,6 +381,25 @@
 
   .userBubble {
     max-width: 88%;
+  }
+
+  .proposalCard {
+    width: 100%;
+    padding: 0.8rem;
+  }
+
+  .proposalHeader {
+    align-items: flex-start;
+  }
+
+  .proposalExpiry {
+    white-space: normal;
+  }
+
+  .previewFieldRow,
+  .diffRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.1rem;
   }
 
   .composerFooter {

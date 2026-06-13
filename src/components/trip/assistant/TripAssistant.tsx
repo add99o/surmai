@@ -55,6 +55,22 @@ type TripAssistantProps = {
   trip: Trip;
 };
 
+type TimelineEntry =
+  | {
+      type: 'message';
+      key: string;
+      sequence: number;
+      timestamp: number;
+      message: AssistantMessage;
+    }
+  | {
+      type: 'proposal';
+      key: string;
+      sequence: number;
+      timestamp: number;
+      proposal: AssistantProposal;
+    };
+
 export const TripAssistant = ({ trip }: TripAssistantProps) => {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
@@ -149,6 +165,7 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
         id: assistantId,
         role: 'assistant',
         content: '',
+        created: new Date().toISOString(),
       },
     ]);
     setInput('');
@@ -283,7 +300,7 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
         setProposals((prev) => prev.map((item) => (item.id === proposal.id ? payload.proposal! : item)));
       }
       if (payload?.message) {
-        setMessages((prev) => [...prev, { id: nanoid(), role: 'assistant', content: payload.message! }]);
+        setMessages((prev) => [...prev, { id: nanoid(), role: 'assistant', content: payload.message!, created: new Date().toISOString() }]);
       }
       if (decision === 'approve') {
         await invalidateItinerary();
@@ -306,7 +323,7 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
         setProposals((prev) => prev.map((item) => (item.id === proposal.id ? payload.proposal! : item)));
       }
       if (payload.message) {
-        setMessages((prev) => [...prev, { id: nanoid(), role: 'assistant', content: payload.message! }]);
+        setMessages((prev) => [...prev, { id: nanoid(), role: 'assistant', content: payload.message!, created: new Date().toISOString() }]);
       }
       await invalidateItinerary();
       await refreshProposals();
@@ -341,6 +358,7 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
 
   const timelineMessages = [introMessage, ...messages].filter((message) => message.content.trim());
   const visibleProposals = proposals.filter((proposal) => proposal.status !== 'expired' || dayjs(proposal.updated).isAfter(dayjs().subtract(1, 'day')));
+  const timelineEntries = buildTimelineEntries(timelineMessages, visibleProposals);
 
   return (
     <Stack gap="md" mt="md" className={classes.assistantWorkspace}>
@@ -386,7 +404,7 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
 
       <Paper withBorder={false} p={0} className={classes.timelineShell}>
         <ScrollArea viewportRef={viewportRef} className={classes.timelineViewport}>
-          <Timeline active={timelineMessages.length + visibleProposals.length} bulletSize={22} lineWidth={1}>
+          <Timeline active={timelineEntries.length} bulletSize={22} lineWidth={1}>
             {isLoading && (
               <Timeline.Item bullet={<Loader size={12} />}>
                 <Text size="sm" c="dimmed">
@@ -394,20 +412,22 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
                 </Text>
               </Timeline.Item>
             )}
-            {timelineMessages.map((message) => (
-              <Timeline.Item key={message.id || message.content} bullet={message.role === 'assistant' ? 'A' : 'Y'}>
-                {renderMessage(message, t)}
-              </Timeline.Item>
-            ))}
-            {visibleProposals.map((proposal) => (
-              <Timeline.Item key={proposal.id} bullet={<ProposalBullet proposal={proposal} />}>
-                <ProposalCard
-                  proposal={proposal}
-                  applying={applyingProposalId === proposal.id}
-                  onApprove={() => handleProposalDecision(proposal, 'approve')}
-                  onReject={() => handleProposalDecision(proposal, 'reject')}
-                  onRetry={() => handleProposalRetry(proposal)}
-                />
+            {timelineEntries.map((entry) => (
+              <Timeline.Item
+                key={entry.key}
+                bullet={entry.type === 'message' ? (entry.message.role === 'assistant' ? 'A' : 'Y') : <ProposalBullet proposal={entry.proposal} />}
+              >
+                {entry.type === 'message' ? (
+                  renderMessage(entry.message, t)
+                ) : (
+                  <ProposalCard
+                    proposal={entry.proposal}
+                    applying={applyingProposalId === entry.proposal.id}
+                    onApprove={() => handleProposalDecision(entry.proposal, 'approve')}
+                    onReject={() => handleProposalDecision(entry.proposal, 'reject')}
+                    onRetry={() => handleProposalRetry(entry.proposal)}
+                  />
+                )}
               </Timeline.Item>
             ))}
             {isStreaming && (
@@ -487,8 +507,8 @@ const ProposalCard = ({
   return (
     <Paper withBorder className={classes.proposalCard}>
       <Stack gap="sm">
-        <Group justify="space-between" align="flex-start">
-          <Stack gap={4}>
+        <Group justify="space-between" align="flex-start" className={classes.proposalHeader}>
+          <Stack gap={5} className={classes.proposalSummary}>
             <Group gap="xs">
               <Badge color={proposal.actionType === 'delete' ? 'red' : proposal.actionType === 'update' ? 'yellow' : 'green'} variant="light">
                 {proposal.actionType === 'batch' ? 'Batch' : labelize(proposal.actionType)}
@@ -497,15 +517,17 @@ const ProposalCard = ({
                 {labelize(proposal.status)}
               </Badge>
             </Group>
-            <Text fw={700}>{preview?.title || proposal.summary}</Text>
+            <Text fw={700} className={classes.proposalTitle}>
+              {preview?.title || proposal.summary}
+            </Text>
             {preview?.summary && (
-              <Text size="sm" c="dimmed">
+              <Text size="sm" c="dimmed" className={classes.proposalDescription}>
                 {preview.summary}
               </Text>
             )}
           </Stack>
           {isPending && (
-            <Text size="xs" c="dimmed">
+            <Text size="xs" c="dimmed" className={classes.proposalExpiry}>
               Expires {dayjs(proposal.expiresAt).format('MMM D, h:mm A')}
             </Text>
           )}
@@ -548,23 +570,26 @@ const ProposalCard = ({
 };
 
 const PreviewChange = ({ change }: { change: AssistantProposalPreviewChange }) => {
+  const previewEntries = previewFieldEntries(change.operation === 'delete' ? change.before : change.after);
+  const diffEntries = previewDiffEntries(change.diff);
+
   return (
-    <Paper withBorder className={classes.previewChange}>
+    <Box className={classes.previewChange}>
       <Stack gap={6}>
-        <Group gap="xs">
+        <Group gap="xs" align="flex-start">
           <Badge size="sm" variant="light">
             {labelize(change.operation)}
           </Badge>
           <Badge size="sm" variant="outline">
             {labelize(change.entity_type)}
           </Badge>
-          <Text fw={600} size="sm">
+          <Text fw={600} size="sm" className={classes.previewTitle}>
             {change.title}
           </Text>
         </Group>
-        {change.operation === 'update' && change.diff && change.diff.length > 0 && (
+        {change.operation === 'update' && diffEntries.length > 0 && (
           <Stack gap={4}>
-            {change.diff.map((diff) => (
+            {diffEntries.map((diff) => (
               <Group key={diff.field} gap="xs" align="flex-start" className={classes.diffRow}>
                 <Text size="xs" fw={700} c="dimmed">
                   {labelize(diff.field)}
@@ -576,13 +601,22 @@ const PreviewChange = ({ change }: { change: AssistantProposalPreviewChange }) =
             ))}
           </Stack>
         )}
-        {change.operation !== 'update' && (
-          <Text size="sm" c={change.operation === 'delete' ? 'red' : undefined}>
-            {formatPreview(change.operation === 'delete' ? change.before : change.after)}
-          </Text>
+        {change.operation !== 'update' && previewEntries.length > 0 && (
+          <Stack gap={4} className={classes.previewFields}>
+            {previewEntries.map((entry) => (
+              <Group key={entry.field} gap="xs" align="flex-start" className={classes.previewFieldRow}>
+                <Text size="xs" fw={700} c="dimmed">
+                  {labelize(entry.field)}
+                </Text>
+                <Text size="sm" c={change.operation === 'delete' ? 'red' : undefined} className={classes.previewValue}>
+                  {entry.value}
+                </Text>
+              </Group>
+            ))}
+          </Stack>
         )}
       </Stack>
-    </Paper>
+    </Box>
   );
 };
 
@@ -705,12 +739,64 @@ const formatValue = (value: unknown) => {
   return String(value);
 };
 
-const formatPreview = (value?: Record<string, unknown>) => {
+const previewFieldEntries = (value?: Record<string, unknown>) => {
   if (!value) {
-    return '';
+    return [];
   }
-  return Object.entries(value)
-    .filter(([key, entry]) => key !== 'id' && entry !== null && entry !== undefined && entry !== '')
-    .map(([key, entry]) => `${labelize(key)}: ${formatValue(entry)}`)
-    .join(' | ');
+  return Object.entries(value).reduce<Array<{ field: string; value: string }>>((entries, [key, entry]) => {
+    if (key === 'id' || key === 'metadata' || key === 'cost_currency' || entry === null || entry === undefined || entry === '') {
+      return entries;
+    }
+    if (key === 'cost_value') {
+      const currency = typeof value.cost_currency === 'string' && value.cost_currency ? ` ${value.cost_currency}` : '';
+      entries.push({ field: 'cost', value: `${formatValue(entry)}${currency}` });
+      return entries;
+    }
+    entries.push({ field: key, value: formatValue(entry) });
+    return entries;
+  }, []);
+};
+
+const buildTimelineEntries = (messages: AssistantMessage[], proposals: AssistantProposal[]) => {
+  const entries: TimelineEntry[] = messages.map((message, index) => ({
+    type: 'message',
+    key: `message-${message.id || index}`,
+    sequence: index,
+    timestamp: timelineTimestamp(message.created, index),
+    message,
+  }));
+
+  proposals.forEach((proposal, index) => {
+    const entry: TimelineEntry = {
+      type: 'proposal',
+      key: `proposal-${proposal.id}`,
+      sequence: messages.length + index,
+      timestamp: timelineTimestamp(proposal.created || proposal.updated, messages.length + index),
+      proposal,
+    };
+    const insertAt = entries.findIndex((item) => item.type === 'message' && item.timestamp > entry.timestamp);
+    if (insertAt === -1) {
+      entries.push(entry);
+    } else {
+      entries.splice(insertAt, 0, entry);
+    }
+  });
+
+  return entries;
+};
+
+const timelineTimestamp = (value: string | undefined, fallback: number) => {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = dayjs(value).valueOf();
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const previewDiffEntries = (diffs: AssistantProposalPreviewChange['diff'] = []) => {
+  const visible = diffs.filter((diff) => diff.field !== 'metadata');
+  if (visible.length > 0) {
+    return visible;
+  }
+  return diffs.length > 0 ? [{ field: 'details', before: 'Previous place details', after: 'Updated place details' }] : [];
 };
