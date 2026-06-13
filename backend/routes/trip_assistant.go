@@ -2,7 +2,6 @@ package routes
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,13 +9,13 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	pbtypes "github.com/pocketbase/pocketbase/tools/types"
@@ -146,7 +145,7 @@ type responsesAPIContentBlock struct {
 	Text string `json:"text"`
 }
 
-const proposalTTL = 2 * time.Minute
+const proposalTTL = 24 * time.Hour
 
 const (
 	assistantToolCreateActivity       = "create_activity"
@@ -163,43 +162,49 @@ const (
 )
 
 type assistantProposal struct {
-	ID        string
-	TripID    string
-	Tool      string
-	Arguments map[string]interface{}
-	ExpiresAt time.Time
-	CreatedAt time.Time
+	Id        string                 `json:"id"`
+	TripID    string                 `json:"trip"`
+	UserID    string                 `json:"user"`
+	Status    string                 `json:"status"`
+	Action    string                 `json:"actionType"`
+	Changes   []assistantChange      `json:"changes"`
+	Summary   string                 `json:"summary"`
+	Preview   map[string]interface{} `json:"preview"`
+	Sources   []assistantSource      `json:"sources,omitempty"`
+	ExpiresAt string                 `json:"expiresAt"`
+	Created   string                 `json:"created"`
+	Updated   string                 `json:"updated"`
+	Error     string                 `json:"error,omitempty"`
+	Result    map[string]interface{} `json:"result,omitempty"`
 }
 
-var proposalStore = struct {
-	sync.RWMutex
-	items map[string]*assistantProposal
-}{
-	items: make(map[string]*assistantProposal),
+type assistantChange struct {
+	Operation   string                 `json:"operation"`
+	EntityType  string                 `json:"entity_type"`
+	RecordID    *string                `json:"record_id"`
+	Fields      map[string]interface{} `json:"fields"`
+	Clear       []string               `json:"clear"`
+	Reason      *string                `json:"reason"`
+	Confidence  float64                `json:"confidence"`
+	Assumptions []string               `json:"assumptions"`
+	Warnings    []string               `json:"warnings"`
+}
+
+type assistantProposalArguments struct {
+	Title       string            `json:"title"`
+	Summary     string            `json:"summary"`
+	Changes     []assistantChange `json:"changes"`
+	Assumptions []string          `json:"assumptions"`
+	Warnings    []string          `json:"warnings"`
 }
 
 const (
-	openAIResponsesEndpoint = "https://api.openai.com/v1/responses"
 	openAIModel             = "gpt-5.4-mini"
 	tripAssistantModel      = openAIModel
-	tripAssistantReasoning  = "low"
-	tripAssistantVerbosity  = "low"
 	tripAssistantMaxHistory = 30
 )
 
 func TripAssistant(e *core.RequestEvent) error {
-	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
-	if apiKey == "" {
-		return e.JSON(http.StatusServiceUnavailable, map[string]string{
-			"error": "OPENAI_API_KEY is not configured on the server",
-		})
-	}
-
-	info, err := e.RequestInfo()
-	if err != nil {
-		return err
-	}
-
 	var req tripAssistantRequest
 	if err := json.NewDecoder(e.Request.Body).Decode(&req); err != nil {
 		return e.JSON(http.StatusBadRequest, map[string]string{
@@ -213,48 +218,35 @@ func TripAssistant(e *core.RequestEvent) error {
 		})
 	}
 
-	tripVal := e.Get("trip")
-	if tripVal == nil {
-		return e.JSON(http.StatusBadRequest, map[string]string{
-			"error": "trip context is missing",
-		})
+	tripRecord, err := tripRecordFromRequest(e)
+	if err != nil {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 
-	tripRecord, ok := tripVal.(*core.Record)
-	if !ok {
-		return e.JSON(http.StatusBadRequest, map[string]string{
-			"error": "unable to read trip info",
-		})
+	info, err := e.RequestInfo()
+	if err != nil {
+		return err
 	}
 	if err := requireTripAssistantUpdateAccess(e, tripRecord, info); err != nil {
 		return err
 	}
 
-	ctx, err := buildTripAssistantContext(e.App, tripRecord)
-	if err != nil {
-		e.App.Logger().Error("TripAssistant build context error", "error", err, "tripId", tripRecord.Id)
-		return e.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "unable to load the latest trip context",
-		})
+	userContent := strings.TrimSpace(req.Messages[len(req.Messages)-1].Content)
+	if userContent == "" {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": "content is required"})
 	}
 
-	responseInput, err := buildResponsesInput(req.Messages, ctx)
-	if err != nil {
-		e.App.Logger().Error("TripAssistant failed to build input", "error", err, "tripId", tripRecord.Id)
-		return e.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "could not format the assistant request",
-		})
+	if _, err := createTripAssistantMessage(e.App, tripRecord.Id, info.Auth.Id, "user", userContent, nil); err != nil {
+		return e.JSON(http.StatusInternalServerError, map[string]string{"error": "unable to save assistant message"})
 	}
 
-	reply, err := invokeResponsesAPI(e.Request.Context(), apiKey, responseInput)
+	reply, metadata, err := runAssistantOnce(e.Request.Context(), e.App, tripRecord, info.Auth.Id)
 	if err != nil {
-		e.App.Logger().Error("TripAssistant call failed", "error", err, "tripId", tripRecord.Id)
-		return e.JSON(http.StatusBadGateway, map[string]string{
-			"error": fmt.Sprintf("assistant request failed: %s", err.Error()),
-		})
+		e.App.Logger().Error("TripAssistant agent failed", "error", err, "tripId", tripRecord.Id)
+		return e.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
 	}
 
-	if err := saveTripAssistantMessage(e.App, tripRecord.Id, info.Auth.Id, "assistant", reply, nil); err != nil {
+	if _, err := createTripAssistantMessage(e.App, tripRecord.Id, info.Auth.Id, "assistant", reply, metadata); err != nil {
 		e.App.Logger().Warn("TripAssistant failed to persist reply", "error", err, "tripId", tripRecord.Id)
 	}
 
@@ -264,6 +256,20 @@ func TripAssistant(e *core.RequestEvent) error {
 			Content: reply,
 		},
 	})
+}
+
+func requireAssistantConfigured(e *core.RequestEvent) error {
+	if strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) == "" {
+		return e.JSON(http.StatusServiceUnavailable, map[string]string{
+			"error": "OPENAI_API_KEY is not configured on the server",
+		})
+	}
+	if _, err := resolveAgentRunnerPath(); err != nil {
+		return e.JSON(http.StatusServiceUnavailable, map[string]string{
+			"error": err.Error(),
+		})
+	}
+	return nil
 }
 
 func ListTripAssistantMessages(e *core.RequestEvent) error {
@@ -363,6 +369,10 @@ func ClearTripAssistantMessages(e *core.RequestEvent) error {
 		}
 	}
 
+	if err := expirePendingAssistantProposals(e.App, tripRecord.Id, info.Auth.Id); err != nil {
+		e.App.Logger().Warn("TripAssistant failed to expire proposals during clear", "error", err, "tripId", tripRecord.Id)
+	}
+
 	return e.JSON(http.StatusOK, map[string]interface{}{"deleted": len(records)})
 }
 
@@ -437,11 +447,8 @@ func requireTripAssistantUpdateAccess(e *core.RequestEvent, tripRecord *core.Rec
 }
 
 func TripAssistantStream(e *core.RequestEvent) error {
-	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
-	if apiKey == "" {
-		return e.JSON(http.StatusServiceUnavailable, map[string]string{
-			"error": "OPENAI_API_KEY is not configured on the server",
-		})
+	if err := requireAssistantConfigured(e); err != nil {
+		return err
 	}
 
 	info, err := e.RequestInfo()
@@ -479,20 +486,9 @@ func TripAssistantStream(e *core.RequestEvent) error {
 		return err
 	}
 
-	ctx, err := buildTripAssistantContext(e.App, tripRecord)
-	if err != nil {
-		e.App.Logger().Error("TripAssistant stream build context error", "error", err, "tripId", tripRecord.Id)
-		return e.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "unable to load the latest trip context",
-		})
-	}
-
-	responseInput, err := buildResponsesInput(req.Messages, ctx)
-	if err != nil {
-		e.App.Logger().Error("TripAssistant stream failed to build input", "error", err, "tripId", tripRecord.Id)
-		return e.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "could not format the assistant request",
-		})
+	userContent := strings.TrimSpace(req.Messages[len(req.Messages)-1].Content)
+	if userContent == "" {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": "content is required"})
 	}
 
 	flusher, ok := e.Response.(http.Flusher)
@@ -507,7 +503,20 @@ func TripAssistantStream(e *core.RequestEvent) error {
 	writer.Header().Set("Cache-Control", "no-cache")
 	writer.Header().Set("Connection", "keep-alive")
 
-	if err := streamResponsesToClient(e.Request.Context(), e.App, writer, flusher, apiKey, tripRecord.Id, info.Auth.Id, responseInput); err != nil {
+	userRecord, err := createTripAssistantMessage(e.App, tripRecord.Id, info.Auth.Id, "user", userContent, nil)
+	if err != nil {
+		sendSSEEvent(writer, flusher, map[string]string{
+			"type":    "error",
+			"message": "unable to save assistant message",
+		})
+		return nil
+	}
+	sendSSEEvent(writer, flusher, map[string]interface{}{
+		"type":    "message_created",
+		"message": storedMessageFromRecord(userRecord),
+	})
+
+	if err := streamAgentToClient(e.Request.Context(), e.App, writer, flusher, tripRecord, info.Auth.Id); err != nil {
 		e.App.Logger().Error("TripAssistant stream failed", "error", err, "tripId", tripRecord.Id)
 		sendSSEEvent(writer, flusher, map[string]string{
 			"type":    "error",
@@ -520,6 +529,40 @@ func TripAssistantStream(e *core.RequestEvent) error {
 
 type proposalDecisionRequest struct {
 	Decision string `json:"decision"`
+}
+
+func ListAssistantProposals(e *core.RequestEvent) error {
+	tripRecord, err := tripRecordFromRequest(e)
+	if err != nil {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	info, err := e.RequestInfo()
+	if err != nil {
+		return err
+	}
+	if err := requireTripAssistantUpdateAccess(e, tripRecord, info); err != nil {
+		return err
+	}
+
+	_ = markExpiredAssistantProposals(e.App, tripRecord.Id, info.Auth.Id)
+	records, err := e.App.FindAllRecords(
+		"trip_assistant_proposals",
+		dbx.NewExp("trip = {:tripId} and user = {:userId}", dbx.Params{"tripId": tripRecord.Id, "userId": info.Auth.Id}),
+	)
+	if err != nil {
+		return e.JSON(http.StatusInternalServerError, map[string]string{"error": "unable to load assistant proposals"})
+	}
+
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].GetDateTime("created").Time().Before(records[j].GetDateTime("created").Time())
+	})
+
+	proposals := make([]assistantProposal, 0, len(records))
+	for _, record := range records {
+		proposals = append(proposals, proposalFromRecord(record))
+	}
+	return e.JSON(http.StatusOK, map[string]interface{}{"proposals": proposals})
 }
 
 func AssistantProposalDecision(e *core.RequestEvent) error {
@@ -547,322 +590,265 @@ func AssistantProposalDecision(e *core.RequestEvent) error {
 		return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 	}
 
-	proposal, ok := getAssistantProposal(proposalID)
-	if !ok {
-		return e.JSON(http.StatusGone, map[string]string{"error": "proposal expired"})
+	proposal, err := e.App.FindRecordById("trip_assistant_proposals", proposalID)
+	if err != nil {
+		return e.JSON(http.StatusNotFound, map[string]string{"error": "proposal not found"})
 	}
-
-	if proposal.TripID != tripRecord.Id {
-		return e.JSON(http.StatusForbidden, map[string]string{"error": "proposal does not belong to this trip"})
-	}
-
-	if proposal.expired() {
-		popAssistantProposal(proposalID)
-		return e.JSON(http.StatusGone, map[string]string{"error": "proposal timed out"})
+	if err := requireProposalOwnership(proposal, tripRecord.Id, info.Auth.Id); err != nil {
+		return e.JSON(http.StatusForbidden, map[string]string{"error": err.Error()})
 	}
 
 	switch strings.ToLower(req.Decision) {
 	case "approve":
-		message, err := applyAssistantProposal(e.App, tripRecord, proposal)
+		if proposal.GetString("status") != "pending" && proposal.GetString("status") != "failed" {
+			return e.JSON(http.StatusConflict, map[string]string{"error": "proposal is not pending"})
+		}
+		if proposalExpired(proposal) {
+			proposal.Set("status", "expired")
+			_ = e.App.Save(proposal)
+			return e.JSON(http.StatusGone, map[string]string{"error": "proposal expired"})
+		}
+		message, err := approveAssistantProposal(e.Request.Context(), e.App, tripRecord, info.Auth.Id, proposal)
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
-		if err := saveTripAssistantMessage(e.App, tripRecord.Id, info.Auth.Id, "assistant", message, nil); err != nil {
-			e.App.Logger().Warn("TripAssistant failed to persist proposal approval", "error", err, "tripId", tripRecord.Id)
-		}
-		popAssistantProposal(proposalID)
-		return e.JSON(http.StatusOK, map[string]string{
-			"status":  "approved",
-			"message": message,
+		return e.JSON(http.StatusOK, map[string]interface{}{
+			"status":   "approved",
+			"message":  message,
+			"proposal": proposalFromRecord(proposal),
 		})
-	case "decline":
+	case "decline", "reject":
 		message := "Okay, I will skip that change."
-		if err := saveTripAssistantMessage(e.App, tripRecord.Id, info.Auth.Id, "assistant", message, nil); err != nil {
+		proposal.Set("status", "rejected")
+		proposal.Set("error", "")
+		if err := e.App.Save(proposal); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "unable to reject proposal"})
+		}
+		if reply, err := resumeAssistantProposal(e.Request.Context(), e.App, tripRecord.Id, info.Auth.Id, proposal, "reject"); err == nil && strings.TrimSpace(reply) != "" {
+			message = reply
+		}
+		if err := saveTripAssistantMessage(e.App, tripRecord.Id, info.Auth.Id, "assistant", message, map[string]interface{}{"proposalId": proposal.Id}); err != nil {
 			e.App.Logger().Warn("TripAssistant failed to persist proposal decline", "error", err, "tripId", tripRecord.Id)
 		}
-		popAssistantProposal(proposalID)
-		return e.JSON(http.StatusOK, map[string]string{
-			"status":  "declined",
-			"message": message,
+		return e.JSON(http.StatusOK, map[string]interface{}{
+			"status":   "rejected",
+			"message":  message,
+			"proposal": proposalFromRecord(proposal),
 		})
 	case "timeout":
 		message := "The request expired. Ask again if you'd like me to re-create it."
-		if err := saveTripAssistantMessage(e.App, tripRecord.Id, info.Auth.Id, "assistant", message, nil); err != nil {
+		proposal.Set("status", "expired")
+		_ = e.App.Save(proposal)
+		if err := saveTripAssistantMessage(e.App, tripRecord.Id, info.Auth.Id, "assistant", message, map[string]interface{}{"proposalId": proposal.Id}); err != nil {
 			e.App.Logger().Warn("TripAssistant failed to persist proposal timeout", "error", err, "tripId", tripRecord.Id)
 		}
-		popAssistantProposal(proposalID)
-		return e.JSON(http.StatusOK, map[string]string{
-			"status":  "timeout",
-			"message": message,
+		return e.JSON(http.StatusOK, map[string]interface{}{
+			"status":   "timeout",
+			"message":  message,
+			"proposal": proposalFromRecord(proposal),
 		})
 	default:
-		return e.JSON(http.StatusBadRequest, map[string]string{"error": "decision must be approve, decline, or timeout"})
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": "decision must be approve, reject, decline, or timeout"})
 	}
 }
 
-func applyAssistantProposal(app core.App, trip *core.Record, proposal *assistantProposal) (string, error) {
-	switch proposal.Tool {
-	case assistantToolCreateActivity:
-		return saveActivityProposal(app, trip.Id, proposal.Arguments)
-	case assistantToolUpdateActivity:
-		return updateActivityProposal(app, trip.Id, proposal.Arguments)
-	case assistantToolDeleteActivity:
-		return deleteActivityProposal(app, trip.Id, proposal.Arguments)
-	case assistantToolCreateLodging:
-		return saveLodgingProposal(app, trip.Id, proposal.Arguments)
-	case assistantToolUpdateLodging:
-		return updateLodgingProposal(app, trip.Id, proposal.Arguments)
-	case assistantToolDeleteLodging:
-		return deleteLodgingProposal(app, trip.Id, proposal.Arguments)
-	case assistantToolCreateTransportation:
-		return saveTransportationProposal(app, trip.Id, proposal.Arguments)
-	case assistantToolUpdateTransportation:
-		return updateTransportationProposal(app, trip.Id, proposal.Arguments)
-	case assistantToolDeleteTransportation:
-		return deleteTransportationProposal(app, trip.Id, proposal.Arguments)
-	default:
-		return "", errors.New("unsupported proposal type")
-	}
-}
-
-func saveActivityProposal(app core.App, tripID string, args map[string]interface{}) (string, error) {
-	collection, err := app.FindCollectionByNameOrId("activities")
+func RetryAssistantProposal(e *core.RequestEvent) error {
+	tripRecord, err := tripRecordFromRequest(e)
 	if err != nil {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	info, err := e.RequestInfo()
+	if err != nil {
+		return err
+	}
+	if err := requireTripAssistantUpdateAccess(e, tripRecord, info); err != nil {
+		return err
+	}
+
+	proposalID := e.Request.PathValue("proposalId")
+	proposal, err := e.App.FindRecordById("trip_assistant_proposals", proposalID)
+	if err != nil {
+		return e.JSON(http.StatusNotFound, map[string]string{"error": "proposal not found"})
+	}
+	if err := requireProposalOwnership(proposal, tripRecord.Id, info.Auth.Id); err != nil {
+		return e.JSON(http.StatusForbidden, map[string]string{"error": err.Error()})
+	}
+	if proposal.GetString("status") != "failed" {
+		return e.JSON(http.StatusConflict, map[string]string{"error": "only failed proposals can be retried"})
+	}
+	message, err := approveAssistantProposal(e.Request.Context(), e.App, tripRecord, info.Auth.Id, proposal)
+	if err != nil {
+		return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return e.JSON(http.StatusOK, map[string]interface{}{
+		"status":   "approved",
+		"message":  message,
+		"proposal": proposalFromRecord(proposal),
+	})
+}
+
+func approveAssistantProposal(ctx context.Context, app core.App, trip *core.Record, userID string, proposal *core.Record) (string, error) {
+	proposal.Set("status", "applying")
+	proposal.Set("error", "")
+	if err := app.Save(proposal); err != nil {
 		return "", err
 	}
 
-	record := core.NewRecord(collection)
-	record.Set("trip", tripID)
-	record.Set("name", stringValue(args["name"]))
-	record.Set("description", stringValue(args["description"]))
-	record.Set("address", stringValue(args["address"]))
-	record.Set("notes", stringValue(args["notes"]))
-
-	if start := stringValue(args["start_time"]); start != "" {
-		record.Set("startDate", start)
-	}
-	if end := stringValue(args["end_time"]); end != "" {
-		record.Set("endDate", end)
+	result, err := applyAssistantProposalBatch(app, trip.Id, proposal)
+	if err != nil {
+		proposal.Set("status", "failed")
+		proposal.Set("error", err.Error())
+		proposal.Set("result", map[string]interface{}{"applied": false})
+		_ = app.Save(proposal)
+		return "", err
 	}
 
-	costValue := floatValue(args["cost_value"])
-	currency := stringValue(args["cost_currency"])
-	if costValue > 0 && currency != "" {
-		costPayload := map[string]interface{}{
-			"value":    costValue,
-			"currency": currency,
+	proposal.Set("status", "approved")
+	proposal.Set("result", result)
+	proposal.Set("error", "")
+	if err := app.Save(proposal); err != nil {
+		return "", err
+	}
+
+	message, err := resumeAssistantProposal(ctx, app, trip.Id, userID, proposal, "approve")
+	if err != nil || strings.TrimSpace(message) == "" {
+		message = result["message"].(string)
+	}
+	if err := saveTripAssistantMessage(app, trip.Id, userID, "assistant", message, map[string]interface{}{"proposalId": proposal.Id}); err != nil {
+		app.Logger().Warn("TripAssistant failed to persist proposal approval", "error", err, "tripId", trip.Id)
+	}
+	return message, nil
+}
+
+func applyAssistantProposalBatch(app core.App, tripID string, proposal *core.Record) (map[string]interface{}, error) {
+	var changes []assistantChange
+	if err := proposal.UnmarshalJSONField("changes", &changes); err != nil {
+		return nil, err
+	}
+	if len(changes) == 0 {
+		return nil, errors.New("proposal has no changes")
+	}
+
+	applied := make([]map[string]interface{}, 0, len(changes))
+	for index, change := range changes {
+		record, err := applyAssistantChange(app, tripID, change)
+		if err != nil {
+			return nil, fmt.Errorf("change %d failed: %w", index+1, err)
 		}
-		record.Set("cost", costPayload)
+		applied = append(applied, record)
 	}
 
-	if metadata := buildActivityMetadata(args); len(metadata) > 0 {
+	message := fmt.Sprintf("Applied %d itinerary change.", len(applied))
+	if len(applied) != 1 {
+		message = fmt.Sprintf("Applied %d itinerary changes.", len(applied))
+	}
+	return map[string]interface{}{
+		"applied": true,
+		"changes": applied,
+		"message": message,
+	}, nil
+}
+
+func applyAssistantChange(app core.App, tripID string, change assistantChange) (map[string]interface{}, error) {
+	collectionName, err := collectionForEntity(change.EntityType)
+	if err != nil {
+		return nil, err
+	}
+	switch change.Operation {
+	case "create":
+		collection, err := app.FindCollectionByNameOrId(collectionName)
+		if err != nil {
+			return nil, err
+		}
+		record := core.NewRecord(collection)
+		record.Set("trip", tripID)
+		if err := applyChangeFields(record, change, true); err != nil {
+			return nil, err
+		}
+		if err := app.Save(record); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"operation": "create", "entity_type": change.EntityType, "record_id": record.Id}, nil
+	case "update":
+		recordID := deref(change.RecordID)
+		record, err := ensureTripRecord(app, collectionName, recordID, tripID)
+		if err != nil {
+			return nil, err
+		}
+		if err := applyChangeFields(record, change, false); err != nil {
+			return nil, err
+		}
+		if err := app.Save(record); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"operation": "update", "entity_type": change.EntityType, "record_id": record.Id}, nil
+	case "delete":
+		recordID := deref(change.RecordID)
+		record, err := ensureTripRecord(app, collectionName, recordID, tripID)
+		if err != nil {
+			return nil, err
+		}
+		if err := app.Delete(record); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"operation": "delete", "entity_type": change.EntityType, "record_id": recordID}, nil
+	default:
+		return nil, errors.New("unsupported operation")
+	}
+}
+
+func applyChangeFields(record *core.Record, change assistantChange, creating bool) error {
+	for _, field := range change.Clear {
+		if pbField := proposalFieldToPocketBase(change.EntityType, field); pbField != "" {
+			record.Set(pbField, nil)
+		}
+	}
+	for field, value := range change.Fields {
+		if value == nil {
+			continue
+		}
+		if pbField := proposalFieldToPocketBase(change.EntityType, field); pbField != "" {
+			record.Set(pbField, value)
+		}
+	}
+
+	if costValue, ok := change.Fields["cost_value"]; ok && costValue != nil {
+		currency := stringValue(change.Fields["cost_currency"])
+		if currency == "" {
+			currency = "USD"
+		}
+		record.Set("cost", map[string]interface{}{"value": floatValue(costValue), "currency": currency})
+	}
+	if metadata := mapValue(change.Fields["metadata"]); len(metadata) > 0 {
 		record.Set("metadata", metadata)
 	}
 
-	if err := app.Save(record); err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("Added activity \"%s\" on %s.", stringValue(args["name"]), stringValue(args["start_time"])), nil
+	return validateRecordForChange(record, change, creating)
 }
 
-func updateActivityProposal(app core.App, tripID string, args map[string]interface{}) (string, error) {
-	record, err := ensureTripRecord(app, "activities", stringValue(args["record_id"]), tripID)
-	if err != nil {
-		return "", err
+func validateRecordForChange(record *core.Record, change assistantChange, creating bool) error {
+	required := map[string][]string{
+		"activity":       {"name", "startDate"},
+		"lodging":        {"name", "type", "address", "startDate", "endDate"},
+		"transportation": {"type", "origin", "destination", "departureTime", "arrivalTime"},
+	}
+	if creating {
+		for _, field := range required[change.EntityType] {
+			if strings.TrimSpace(record.GetString(field)) == "" {
+				return fmt.Errorf("%s is required", field)
+			}
+		}
 	}
 
-	if name := stringValue(args["name"]); name != "" {
-		record.Set("name", name)
+	startField, endField := timeFieldsForEntity(change.EntityType)
+	if startField != "" && endField != "" {
+		start := record.GetDateTime(startField).Time()
+		end := record.GetDateTime(endField).Time()
+		if !start.IsZero() && !end.IsZero() && !end.After(start) {
+			return errors.New("end time must be after start time")
+		}
 	}
-	if desc := stringValue(args["description"]); desc != "" {
-		record.Set("description", desc)
-	}
-	if address := stringValue(args["address"]); address != "" {
-		record.Set("address", address)
-	}
-	if note := stringValue(args["notes"]); note != "" {
-		record.Set("notes", note)
-	}
-	if start := stringValue(args["start_time"]); start != "" {
-		record.Set("startDate", start)
-	}
-	if end := stringValue(args["end_time"]); end != "" {
-		record.Set("endDate", end)
-	}
-	if metadata := buildActivityMetadata(args); len(metadata) > 0 {
-		record.Set("metadata", metadata)
-	}
-	applyCostUpdate(record, args)
-
-	if err := app.Save(record); err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("Updated activity \"%s\".", record.GetString("name")), nil
-}
-
-func deleteActivityProposal(app core.App, tripID string, args map[string]interface{}) (string, error) {
-	record, err := ensureTripRecord(app, "activities", stringValue(args["record_id"]), tripID)
-	if err != nil {
-		return "", err
-	}
-
-	name := record.GetString("name")
-	if err := app.Delete(record); err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("Removed activity \"%s\".", name), nil
-}
-
-func saveLodgingProposal(app core.App, tripID string, args map[string]interface{}) (string, error) {
-	collection, err := app.FindCollectionByNameOrId("lodgings")
-	if err != nil {
-		return "", err
-	}
-
-	record := core.NewRecord(collection)
-	record.Set("trip", tripID)
-	record.Set("name", stringValue(args["name"]))
-	record.Set("type", stringValue(args["type"]))
-	record.Set("address", stringValue(args["address"]))
-	record.Set("confirmationCode", stringValue(args["confirmation"]))
-
-	if start := stringValue(args["start_time"]); start != "" {
-		record.Set("startDate", start)
-	}
-	if end := stringValue(args["end_time"]); end != "" {
-		record.Set("endDate", end)
-	}
-
-	if err := app.Save(record); err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("Added lodging \"%s\" for %s to %s.", stringValue(args["name"]), stringValue(args["start_time"]), stringValue(args["end_time"])), nil
-}
-
-func saveTransportationProposal(app core.App, tripID string, args map[string]interface{}) (string, error) {
-	collection, err := app.FindCollectionByNameOrId("transportations")
-	if err != nil {
-		return "", err
-	}
-
-	record := core.NewRecord(collection)
-	record.Set("trip", tripID)
-	record.Set("type", stringValue(args["type"]))
-	record.Set("provider", stringValue(args["provider"]))
-	record.Set("origin", stringValue(args["origin"]))
-	record.Set("destination", stringValue(args["destination"]))
-	record.Set("notes", stringValue(args["notes"]))
-
-	if dep := stringValue(args["departure_time"]); dep != "" {
-		record.Set("departureTime", dep)
-	}
-	if arr := stringValue(args["arrival_time"]); arr != "" {
-		record.Set("arrivalTime", arr)
-	}
-
-	if err := app.Save(record); err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("Added %s from %s to %s departing %s.", stringValue(args["type"]), stringValue(args["origin"]), stringValue(args["destination"]), stringValue(args["departure_time"])), nil
-}
-
-func updateLodgingProposal(app core.App, tripID string, args map[string]interface{}) (string, error) {
-	record, err := ensureTripRecord(app, "lodgings", stringValue(args["record_id"]), tripID)
-	if err != nil {
-		return "", err
-	}
-
-	if name := stringValue(args["name"]); name != "" {
-		record.Set("name", name)
-	}
-	if ltype := stringValue(args["type"]); ltype != "" {
-		record.Set("type", ltype)
-	}
-	if address := stringValue(args["address"]); address != "" {
-		record.Set("address", address)
-	}
-	if start := stringValue(args["start_time"]); start != "" {
-		record.Set("startDate", start)
-	}
-	if end := stringValue(args["end_time"]); end != "" {
-		record.Set("endDate", end)
-	}
-	if confirmation := stringValue(args["confirmation"]); confirmation != "" {
-		record.Set("confirmationCode", confirmation)
-	}
-	if notes := stringValue(args["notes"]); notes != "" {
-		record.Set("notes", notes)
-	}
-
-	if err := app.Save(record); err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("Updated lodging \"%s\".", record.GetString("name")), nil
-}
-
-func deleteLodgingProposal(app core.App, tripID string, args map[string]interface{}) (string, error) {
-	record, err := ensureTripRecord(app, "lodgings", stringValue(args["record_id"]), tripID)
-	if err != nil {
-		return "", err
-	}
-	name := record.GetString("name")
-	if err := app.Delete(record); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("Removed lodging \"%s\".", name), nil
-}
-
-func updateTransportationProposal(app core.App, tripID string, args map[string]interface{}) (string, error) {
-	record, err := ensureTripRecord(app, "transportations", stringValue(args["record_id"]), tripID)
-	if err != nil {
-		return "", err
-	}
-
-	if t := stringValue(args["type"]); t != "" {
-		record.Set("type", t)
-	}
-	if provider := stringValue(args["provider"]); provider != "" {
-		record.Set("provider", provider)
-	}
-	if origin := stringValue(args["origin"]); origin != "" {
-		record.Set("origin", origin)
-	}
-	if destination := stringValue(args["destination"]); destination != "" {
-		record.Set("destination", destination)
-	}
-	if dep := stringValue(args["departure_time"]); dep != "" {
-		record.Set("departureTime", dep)
-	}
-	if arr := stringValue(args["arrival_time"]); arr != "" {
-		record.Set("arrivalTime", arr)
-	}
-	if notes := stringValue(args["notes"]); notes != "" {
-		record.Set("notes", notes)
-	}
-
-	if err := app.Save(record); err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("Updated %s on %s.", record.GetString("type"), record.GetString("departureTime")), nil
-}
-
-func deleteTransportationProposal(app core.App, tripID string, args map[string]interface{}) (string, error) {
-	record, err := ensureTripRecord(app, "transportations", stringValue(args["record_id"]), tripID)
-	if err != nil {
-		return "", err
-	}
-	label := fmt.Sprintf("%s from %s to %s", record.GetString("type"), record.GetString("origin"), record.GetString("destination"))
-	if err := app.Delete(record); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("Removed %s.", label), nil
+	return nil
 }
 
 func buildActivityMetadata(args map[string]interface{}) map[string]interface{} {
@@ -1211,40 +1197,6 @@ func formatDate(dt pbtypes.DateTime) string {
 	return dt.Time().Format("2006-01-02T15:04:05")
 }
 
-func buildResponsesInput(messages []assistantMessage, ctx *tripAssistantContext) ([]map[string]interface{}, error) {
-	ctxJSON, err := json.MarshalIndent(ctx, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-
-	systemPrompt := strings.Join([]string{
-		"You are Surmai's trip assistant.",
-		"Answer from the provided trip context first. If current external facts are needed, such as hours, closures, venue availability, weather, or recent disruption, use web search and cite sources.",
-		"Keep replies concise and easy to scan. Use 12-hour times with AM/PM and dates as MM-DD unless the user asks for more detail.",
-		"For itinerary changes, call the matching create/update/delete tool. Always use record_id for edits/deletes. The change is only proposed until the traveler approves it.",
-		"State assumptions when you infer missing details.",
-	}, " ")
-	contextPrompt := fmt.Sprintf("Latest trip context JSON:\n%s", string(ctxJSON))
-
-	input := []map[string]interface{}{
-		newResponsesTextBlock("developer", systemPrompt),
-		newResponsesTextBlock("developer", contextPrompt),
-	}
-
-	for _, message := range compactAssistantHistory(messages) {
-		if message.Content == "" {
-			continue
-		}
-		role := message.Role
-		if role != "user" && role != "assistant" {
-			continue
-		}
-		input = append(input, newResponsesTextBlock(role, message.Content))
-	}
-
-	return input, nil
-}
-
 func compactAssistantHistory(messages []assistantMessage) []assistantMessage {
 	if len(messages) <= tripAssistantMaxHistory {
 		return messages
@@ -1252,252 +1204,744 @@ func compactAssistantHistory(messages []assistantMessage) []assistantMessage {
 	return messages[len(messages)-tripAssistantMaxHistory:]
 }
 
-func newResponsesTextBlock(role, text string) map[string]interface{} {
-	contentType := "input_text"
-	if role == "assistant" {
-		contentType = "output_text"
-	}
-
-	return map[string]interface{}{
-		"role": role,
-		"content": []map[string]string{
-			{
-				"type": contentType,
-				"text": text,
-			},
-		},
-	}
+type agentRunnerInput struct {
+	Mode             string             `json:"mode"`
+	Model            string             `json:"model"`
+	Messages         []assistantMessage `json:"messages,omitempty"`
+	TripContext      interface{}        `json:"tripContext,omitempty"`
+	SDKState         string             `json:"sdkState,omitempty"`
+	Decision         string             `json:"decision,omitempty"`
+	RejectionMessage string             `json:"rejectionMessage,omitempty"`
 }
 
-func invokeResponsesAPI(ctx context.Context, apiKey string, input []map[string]interface{}) (string, error) {
-	payload := map[string]interface{}{
-		"model": tripAssistantModel,
-		"input": input,
-		"reasoning": map[string]string{
-			"effort": tripAssistantReasoning,
-		},
-		"text": map[string]string{
-			"verbosity": tripAssistantVerbosity,
-		},
-		"tools":       buildAssistantTools(),
-		"tool_choice": "auto",
-		"include":     []string{"web_search_call.action.sources"},
-		"store":       false,
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, openAIResponsesEndpoint, bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	client := &http.Client{
-		Timeout: 45 * time.Second,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return "", parseOpenAIError(resp)
-	}
-
-	var response responsesAPIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", err
-	}
-
-	text := strings.TrimSpace(strings.Join(response.OutputText, "\n"))
-	if text == "" {
-		text = extractFallbackOutput(response)
-	}
-	if text == "" {
-		return "", errors.New("assistant returned an empty message")
-	}
-
-	return text, nil
+type agentRunnerEvent struct {
+	Type          string                 `json:"type"`
+	Text          string                 `json:"text,omitempty"`
+	Message       string                 `json:"message,omitempty"`
+	FinalOutput   interface{}            `json:"finalOutput,omitempty"`
+	Arguments     interface{}            `json:"arguments,omitempty"`
+	SDKState      string                 `json:"sdkState,omitempty"`
+	Interruptions interface{}            `json:"interruptions,omitempty"`
+	Sources       []assistantSource      `json:"sources,omitempty"`
+	Raw           map[string]interface{} `json:"-"`
 }
 
-func streamResponsesToClient(
-	ctx context.Context,
-	app core.App,
-	writer http.ResponseWriter,
-	flusher http.Flusher,
-	apiKey string,
-	tripID string,
-	userID string,
-	input []map[string]interface{},
-) error {
-	callBuffer := &functionCallBuffer{}
-	proposalIssued := false
+func runAssistantOnce(ctx context.Context, app core.App, trip *core.Record, userID string) (string, map[string]interface{}, error) {
+	events, err := invokeAgentRunner(ctx, app, trip, userID, agentRunnerInput{Mode: "run", Model: tripAssistantModel})
+	if err != nil {
+		return "", nil, err
+	}
+	var text strings.Builder
+	sources := make([]assistantSource, 0)
+	for _, event := range events {
+		switch event.Type {
+		case "text_delta":
+			text.WriteString(event.Text)
+		case "sources":
+			sources = append(sources, event.Sources...)
+		case "proposal_interruption":
+			return "", nil, errors.New("proposal approval is only supported over the stream endpoint")
+		case "error":
+			return "", nil, errors.New(event.Message)
+		}
+	}
+	metadata := map[string]interface{}{}
+	if len(sources) > 0 {
+		metadata["sources"] = sources
+	}
+	return strings.TrimSpace(text.String()), metadata, nil
+}
+
+func streamAgentToClient(ctx context.Context, app core.App, writer http.ResponseWriter, flusher http.Flusher, trip *core.Record, userID string) error {
+	events, err := invokeAgentRunner(ctx, app, trip, userID, agentRunnerInput{Mode: "run", Model: tripAssistantModel})
+	if err != nil {
+		return err
+	}
+
 	var assistantText strings.Builder
 	sources := make([]assistantSource, 0)
-	sourceKeys := map[string]bool{}
+	persisted := false
 
-	payload := map[string]interface{}{
-		"model": tripAssistantModel,
-		"input": input,
-		"reasoning": map[string]string{
-			"effort": tripAssistantReasoning,
-		},
-		"text": map[string]string{
-			"verbosity": tripAssistantVerbosity,
-		},
-		"tools":       buildAssistantTools(),
-		"tool_choice": "auto",
-		"include":     []string{"web_search_call.action.sources"},
-		"stream":      true,
-		"store":       false,
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, openAIResponsesEndpoint, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	client := &http.Client{
-		Timeout: 0,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return parseOpenAIError(resp)
-	}
-
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-	completed := false
-	persistedReply := false
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" || !strings.HasPrefix(line, "data:") {
-			continue
-		}
-
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "[DONE]" {
-			break
-		}
-
-		var event map[string]interface{}
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			continue
-		}
-
-		eventType, _ := event["type"].(string)
-		if newSources := extractAssistantSources(event, sourceKeys); len(newSources) > 0 {
-			sources = append(sources, newSources...)
-			sendSSEEvent(writer, flusher, map[string]interface{}{
-				"type":    "sources",
-				"sources": newSources,
-			})
-		}
-
-		switch eventType {
-		case "response.output_item.added":
-			item, _ := event["item"].(map[string]interface{})
-			if item != nil {
-				callBuffer.handleOutputItemAdded(item)
+	for _, event := range events {
+		switch event.Type {
+		case "text_delta":
+			assistantText.WriteString(event.Text)
+			sendSSEEvent(writer, flusher, map[string]string{"type": "text_delta", "text": event.Text})
+		case "sources":
+			sources = append(sources, event.Sources...)
+			sendSSEEvent(writer, flusher, map[string]interface{}{"type": "sources", "sources": event.Sources})
+		case "proposal_interruption":
+			if strings.TrimSpace(assistantText.String()) != "" {
+				metadata := map[string]interface{}{}
+				if len(sources) > 0 {
+					metadata["sources"] = sources
+				}
+				_ = saveTripAssistantMessage(app, trip.Id, userID, "assistant", assistantText.String(), metadata)
 			}
-		case "response.function_call_arguments.delta":
-			callBuffer.handleArgumentsDelta(event)
-		case "response.function_call_arguments.done":
-			if proposalIssued {
-				continue
+			proposal, err := createAssistantProposalRecord(app, trip, userID, event)
+			if err != nil {
+				return err
 			}
-			if proposalPayload, ok := callBuffer.finalizeProposal(event, tripID); ok {
-				proposalIssued = true
-				if proposal, ok := proposalPayload["proposal"].(map[string]interface{}); ok {
-					if summary := stringValue(proposal["summary"]); summary != "" {
-						metadata := map[string]interface{}{
-							"proposal": proposal,
-						}
-						if err := saveTripAssistantMessage(app, tripID, userID, "assistant", summary, metadata); err != nil {
-							app.Logger().Warn("TripAssistant failed to persist proposal", "error", err, "tripId", tripID)
-						}
+			sendSSEEvent(writer, flusher, map[string]interface{}{"type": "proposal_created", "proposal": proposalFromRecord(proposal)})
+			sendSSEEvent(writer, flusher, map[string]string{"type": "done"})
+			persisted = true
+		case "done":
+			if !persisted {
+				metadata := map[string]interface{}{}
+				if len(sources) > 0 {
+					metadata["sources"] = sources
+				}
+				if strings.TrimSpace(assistantText.String()) != "" {
+					if _, err := createTripAssistantMessage(app, trip.Id, userID, "assistant", assistantText.String(), metadata); err != nil {
+						app.Logger().Warn("TripAssistant failed to persist stream reply", "error", err, "tripId", trip.Id)
 					}
 				}
-				sendSSEEvent(writer, flusher, proposalPayload)
-				return nil
+				sendSSEEvent(writer, flusher, map[string]string{"type": "done"})
+				persisted = true
 			}
-		case "response.output_text.delta":
-			delta, _ := event["delta"].(string)
-			if delta != "" {
-				assistantText.WriteString(delta)
-				sendSSEEvent(writer, flusher, map[string]string{
-					"type": "delta",
-					"text": delta,
-				})
-			}
-		case "response.completed":
-			metadata := map[string]interface{}{}
-			if len(sources) > 0 {
-				metadata["sources"] = sources
-			}
-			if err := saveTripAssistantMessage(app, tripID, userID, "assistant", assistantText.String(), metadata); err != nil {
-				app.Logger().Warn("TripAssistant failed to persist stream reply", "error", err, "tripId", tripID)
-			}
-			persistedReply = true
-			sendSSEEvent(writer, flusher, map[string]string{
-				"type": "done",
-			})
-			completed = true
-		case "response.error":
-			message := stringValue(event["message"])
-			if message == "" {
-				message = "assistant request failed"
-			}
-			sendSSEEvent(writer, flusher, map[string]string{
-				"type":    "error",
-				"message": message,
-			})
+		case "error":
+			return errors.New(event.Message)
 		}
 	}
 
-	if !persistedReply && !proposalIssued && strings.TrimSpace(assistantText.String()) != "" {
+	if !persisted && strings.TrimSpace(assistantText.String()) != "" {
 		metadata := map[string]interface{}{}
 		if len(sources) > 0 {
 			metadata["sources"] = sources
 		}
-		if err := saveTripAssistantMessage(app, tripID, userID, "assistant", assistantText.String(), metadata); err != nil {
-			app.Logger().Warn("TripAssistant failed to persist partial stream reply", "error", err, "tripId", tripID)
+		_ = saveTripAssistantMessage(app, trip.Id, userID, "assistant", assistantText.String(), metadata)
+		sendSSEEvent(writer, flusher, map[string]string{"type": "done"})
+	}
+	return nil
+}
+
+func invokeAgentRunner(ctx context.Context, app core.App, trip *core.Record, userID string, input agentRunnerInput) ([]agentRunnerEvent, error) {
+	runnerPath, err := resolveAgentRunnerPath()
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) == "" {
+		return nil, errors.New("OPENAI_API_KEY is not configured on the server")
+	}
+
+	if input.Mode == "run" {
+		if trip == nil {
+			return nil, errors.New("trip is required for assistant runs")
+		}
+		tripContext, err := buildTripAssistantContext(app, trip)
+		if err != nil {
+			return nil, err
+		}
+		messages, err := loadAssistantHistory(app, trip.Id, userID)
+		if err != nil {
+			return nil, err
+		}
+		input.TripContext = tripContext
+		input.Messages = compactAssistantHistory(messages)
+	}
+	input.Model = tripAssistantModel
+
+	body, err := json.Marshal(input)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := exec.CommandContext(ctx, "node", runnerPath)
+	cmd.Stdin = strings.NewReader(string(body))
+	cmd.Env = os.Environ()
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	events := make([]agentRunnerEvent, 0)
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		var raw map[string]interface{}
+		if err := json.Unmarshal(scanner.Bytes(), &raw); err != nil {
+			continue
+		}
+		event := agentRunnerEvent{Raw: raw, Type: stringValue(raw["type"]), Text: stringValue(raw["text"]), Message: stringValue(raw["message"]), SDKState: stringValue(raw["sdkState"])}
+		if raw["arguments"] != nil {
+			event.Arguments = raw["arguments"]
+		}
+		if raw["interruptions"] != nil {
+			event.Interruptions = raw["interruptions"]
+		}
+		if raw["finalOutput"] != nil {
+			event.FinalOutput = raw["finalOutput"]
+		}
+		if srcRaw, ok := raw["sources"].([]interface{}); ok {
+			event.Sources = decodeAssistantSources(srcRaw)
+		}
+		events = append(events, event)
+	}
+	stderrBytes, _ := io.ReadAll(stderr)
+	waitErr := cmd.Wait()
+	if scanErr := scanner.Err(); scanErr != nil {
+		return events, scanErr
+	}
+	if waitErr != nil {
+		for _, event := range events {
+			if event.Type == "error" && event.Message != "" {
+				return events, errors.New(event.Message)
+			}
+		}
+		return events, fmt.Errorf("agent runner failed: %s", strings.TrimSpace(string(stderrBytes)))
+	}
+	return events, nil
+}
+
+func resolveAgentRunnerPath() (string, error) {
+	candidates := []string{
+		filepath.Join("backend", "agent-runner", "dist", "index.js"),
+		filepath.Join("agent-runner", "dist", "index.js"),
+		filepath.Join("/pb", "agent-runner", "dist", "index.js"),
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
 		}
 	}
+	return "", errors.New("agent runner is not built")
+}
 
-	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
+func loadAssistantHistory(app core.App, tripID, userID string) ([]assistantMessage, error) {
+	records, err := app.FindAllRecords(
+		"trip_assistant_messages",
+		dbx.NewExp("trip = {:tripId} and user = {:userId}", dbx.Params{"tripId": tripID, "userId": userID}),
+	)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].GetDateTime("created").Time().Before(records[j].GetDateTime("created").Time())
+	})
+	messages := make([]assistantMessage, 0, len(records))
+	for _, record := range records {
+		messages = append(messages, assistantMessage{Role: record.GetString("role"), Content: record.GetString("content")})
+	}
+	return messages, nil
+}
+
+func createAssistantProposalRecord(app core.App, trip *core.Record, userID string, event agentRunnerEvent) (*core.Record, error) {
+	args, err := decodeProposalArguments(event.Arguments)
+	if err != nil {
+		return nil, err
+	}
+	if len(args.Changes) == 0 {
+		return nil, errors.New("proposal contains no changes")
+	}
+
+	preview, err := buildProposalPreview(app, trip.Id, args)
+	if err != nil {
+		return nil, err
+	}
+
+	collection, err := app.FindCollectionByNameOrId("trip_assistant_proposals")
+	if err != nil {
+		return nil, err
+	}
+	record := core.NewRecord(collection)
+	record.Set("trip", trip.Id)
+	record.Set("user", userID)
+	record.Set("status", "pending")
+	record.Set("actionType", proposalActionType(args.Changes))
+	record.Set("changes", args.Changes)
+	record.Set("summary", firstNonEmpty(args.Summary, args.Title, "I have itinerary changes ready to review."))
+	record.Set("preview", preview)
+	record.Set("sources", event.Sources)
+	record.Set("sdkState", event.SDKState)
+	record.Set("sdkInterruptions", event.Interruptions)
+	record.Set("expiresAt", time.Now().UTC().Add(proposalTTL).Format(time.RFC3339))
+	if err := app.Save(record); err != nil {
+		return nil, err
+	}
+	return record, nil
+}
+
+func decodeProposalArguments(raw interface{}) (assistantProposalArguments, error) {
+	var args assistantProposalArguments
+	switch value := raw.(type) {
+	case string:
+		if err := json.Unmarshal([]byte(value), &args); err != nil {
+			return args, err
+		}
+	default:
+		data, err := json.Marshal(value)
+		if err != nil {
+			return args, err
+		}
+		if err := json.Unmarshal(data, &args); err != nil {
+			return args, err
+		}
+	}
+	return args, validateProposalArguments(args)
+}
+
+func validateProposalArguments(args assistantProposalArguments) error {
+	for i, change := range args.Changes {
+		if _, err := collectionForEntity(change.EntityType); err != nil {
+			return fmt.Errorf("change %d: %w", i+1, err)
+		}
+		switch change.Operation {
+		case "create":
+			if deref(change.RecordID) != "" {
+				return fmt.Errorf("change %d: create must not include record_id", i+1)
+			}
+		case "update", "delete":
+			if deref(change.RecordID) == "" {
+				return fmt.Errorf("change %d: record_id is required", i+1)
+			}
+		default:
+			return fmt.Errorf("change %d: unsupported operation", i+1)
+		}
+		if err := validateChangeTimes(change); err != nil {
+			return fmt.Errorf("change %d: %w", i+1, err)
+		}
+	}
+	return nil
+}
+
+func validateChangeTimes(change assistantChange) error {
+	start := firstNonEmpty(stringValue(change.Fields["start_time"]), stringValue(change.Fields["departure_time"]))
+	end := firstNonEmpty(stringValue(change.Fields["end_time"]), stringValue(change.Fields["arrival_time"]))
+	if start != "" {
+		if _, err := parseAssistantTime(start); err != nil {
+			return fmt.Errorf("invalid start time: %w", err)
+		}
+	}
+	if end != "" {
+		if _, err := parseAssistantTime(end); err != nil {
+			return fmt.Errorf("invalid end time: %w", err)
+		}
+	}
+	if start != "" && end != "" {
+		startTime, _ := parseAssistantTime(start)
+		endTime, _ := parseAssistantTime(end)
+		if !endTime.After(startTime) {
+			return errors.New("end time must be after start time")
+		}
+	}
+	return nil
+}
+
+func buildProposalPreview(app core.App, tripID string, args assistantProposalArguments) (map[string]interface{}, error) {
+	changes := make([]map[string]interface{}, 0, len(args.Changes))
+	for _, change := range args.Changes {
+		if err := validateChangeWithinTrip(tripID, app, change); err != nil {
+			return nil, err
+		}
+		collection, err := collectionForEntity(change.EntityType)
+		if err != nil {
+			return nil, err
+		}
+		item := map[string]interface{}{
+			"operation":   change.Operation,
+			"entity_type": change.EntityType,
+			"record_id":   deref(change.RecordID),
+			"reason":      deref(change.Reason),
+			"confidence":  change.Confidence,
+			"assumptions": change.Assumptions,
+			"warnings":    change.Warnings,
+		}
+		switch change.Operation {
+		case "create":
+			after := previewFromChange(change)
+			item["title"] = previewTitle(change.EntityType, after)
+			item["after"] = after
+		case "update":
+			record, err := ensureTripRecord(app, collection, deref(change.RecordID), tripID)
+			if err != nil {
+				return nil, err
+			}
+			before := recordPreview(change.EntityType, record)
+			after := cloneMap(before)
+			applyPreviewChange(after, change)
+			item["title"] = previewTitle(change.EntityType, after)
+			item["before"] = before
+			item["after"] = after
+			item["diff"] = diffPreview(before, after)
+		case "delete":
+			record, err := ensureTripRecord(app, collection, deref(change.RecordID), tripID)
+			if err != nil {
+				return nil, err
+			}
+			before := recordPreview(change.EntityType, record)
+			item["title"] = previewTitle(change.EntityType, before)
+			item["before"] = before
+		}
+		changes = append(changes, item)
+	}
+	return map[string]interface{}{
+		"title":       firstNonEmpty(args.Title, args.Summary, "Itinerary proposal"),
+		"summary":     firstNonEmpty(args.Summary, args.Title, "Review these itinerary changes."),
+		"assumptions": args.Assumptions,
+		"warnings":    args.Warnings,
+		"changes":     changes,
+	}, nil
+}
+
+func validateChangeWithinTrip(tripID string, app core.App, change assistantChange) error {
+	trip, err := app.FindRecordById("trips", tripID)
+	if err != nil {
 		return err
 	}
-
-	if !completed && !proposalIssued {
-		sendSSEEvent(writer, flusher, map[string]string{
-			"type": "done",
-		})
+	start := trip.GetDateTime("startDate").Time()
+	end := trip.GetDateTime("endDate").Time()
+	if start.IsZero() || end.IsZero() {
+		return nil
 	}
-
+	start = start.AddDate(0, 0, -1)
+	end = end.AddDate(0, 0, 1)
+	for _, field := range []string{"start_time", "end_time", "departure_time", "arrival_time"} {
+		value := stringValue(change.Fields[field])
+		if value == "" {
+			continue
+		}
+		t, err := parseAssistantTime(value)
+		if err != nil {
+			return err
+		}
+		if t.Before(start) || t.After(end) {
+			return fmt.Errorf("%s is outside the trip date range", field)
+		}
+	}
 	return nil
+}
+
+func resumeAssistantProposal(ctx context.Context, app core.App, tripID, userID string, proposal *core.Record, decision string) (string, error) {
+	state := proposal.GetString("sdkState")
+	if strings.TrimSpace(state) == "" {
+		if decision == "approve" {
+			return "Applied the approved itinerary changes.", nil
+		}
+		return "Okay, I will skip that change.", nil
+	}
+	events, err := invokeAgentRunner(ctx, app, nil, userID, agentRunnerInput{
+		Mode:             "resume",
+		Model:            tripAssistantModel,
+		SDKState:         state,
+		Decision:         decision,
+		RejectionMessage: "The traveler rejected this itinerary proposal.",
+	})
+	if err != nil {
+		return "", err
+	}
+	var text strings.Builder
+	for _, event := range events {
+		if event.Type == "text_delta" {
+			text.WriteString(event.Text)
+		}
+		if event.Type == "error" {
+			return "", errors.New(event.Message)
+		}
+	}
+	_ = tripID
+	return strings.TrimSpace(text.String()), nil
+}
+
+func proposalFromRecord(record *core.Record) assistantProposal {
+	var changes []assistantChange
+	var preview map[string]interface{}
+	var sources []assistantSource
+	var result map[string]interface{}
+	_ = record.UnmarshalJSONField("changes", &changes)
+	_ = record.UnmarshalJSONField("preview", &preview)
+	_ = record.UnmarshalJSONField("sources", &sources)
+	_ = record.UnmarshalJSONField("result", &result)
+	return assistantProposal{
+		Id:        record.Id,
+		TripID:    record.GetString("trip"),
+		UserID:    record.GetString("user"),
+		Status:    record.GetString("status"),
+		Action:    record.GetString("actionType"),
+		Changes:   changes,
+		Summary:   record.GetString("summary"),
+		Preview:   preview,
+		Sources:   sources,
+		ExpiresAt: record.GetDateTime("expiresAt").Time().Format(time.RFC3339),
+		Created:   record.GetDateTime("created").Time().Format(time.RFC3339),
+		Updated:   record.GetDateTime("updated").Time().Format(time.RFC3339),
+		Error:     record.GetString("error"),
+		Result:    result,
+	}
+}
+
+func requireProposalOwnership(record *core.Record, tripID, userID string) error {
+	if record.GetString("trip") != tripID {
+		return errors.New("proposal does not belong to this trip")
+	}
+	if record.GetString("user") != userID {
+		return errors.New("proposal does not belong to this user")
+	}
+	return nil
+}
+
+func proposalExpired(record *core.Record) bool {
+	expires := record.GetDateTime("expiresAt").Time()
+	return !expires.IsZero() && time.Now().UTC().After(expires)
+}
+
+func markExpiredAssistantProposals(app core.App, tripID, userID string) error {
+	records, err := app.FindAllRecords(
+		"trip_assistant_proposals",
+		dbx.NewExp("trip = {:tripId} and user = {:userId} and status = 'pending' and expiresAt < {:now}", dbx.Params{
+			"tripId": tripID,
+			"userId": userID,
+			"now":    time.Now().UTC().Format(time.RFC3339),
+		}),
+	)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		record.Set("status", "expired")
+		if err := app.Save(record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func expirePendingAssistantProposals(app core.App, tripID, userID string) error {
+	records, err := app.FindAllRecords(
+		"trip_assistant_proposals",
+		dbx.NewExp("trip = {:tripId} and user = {:userId} and status = 'pending'", dbx.Params{"tripId": tripID, "userId": userID}),
+	)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		record.Set("status", "expired")
+		if err := app.Save(record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func CleanupExpiredTripAssistantProposals(app core.App) error {
+	records, err := app.FindAllRecords(
+		"trip_assistant_proposals",
+		dbx.NewExp("status = 'pending' and expiresAt < {:now}", dbx.Params{"now": time.Now().UTC().Format(time.RFC3339)}),
+	)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		record.Set("status", "expired")
+		if err := app.Save(record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func decodeAssistantSources(raw []interface{}) []assistantSource {
+	sources := make([]assistantSource, 0, len(raw))
+	for _, item := range raw {
+		entry := mapValue(item)
+		if url := stringValue(entry["url"]); url != "" {
+			source := assistantSource{URL: url}
+			if title := stringValue(entry["title"]); title != "" {
+				source.Title = title
+			}
+			sources = append(sources, source)
+		}
+	}
+	return sources
+}
+
+func collectionForEntity(entity string) (string, error) {
+	switch entity {
+	case "activity":
+		return "activities", nil
+	case "lodging":
+		return "lodgings", nil
+	case "transportation":
+		return "transportations", nil
+	default:
+		return "", errors.New("unsupported entity type")
+	}
+}
+
+func proposalFieldToPocketBase(entity, field string) string {
+	fieldMap := map[string]string{
+		"name":           "name",
+		"description":    "description",
+		"address":        "address",
+		"type":           "type",
+		"origin":         "origin",
+		"destination":    "destination",
+		"provider":       "provider",
+		"start_time":     "startDate",
+		"end_time":       "endDate",
+		"departure_time": "departureTime",
+		"arrival_time":   "arrivalTime",
+		"confirmation":   "confirmationCode",
+		"notes":          "notes",
+		"link":           "link",
+	}
+	if entity == "activity" && field == "end_time" {
+		return "endDate"
+	}
+	if entity == "lodging" && field == "start_time" {
+		return "startDate"
+	}
+	if entity == "lodging" && field == "end_time" {
+		return "endDate"
+	}
+	return fieldMap[field]
+}
+
+func timeFieldsForEntity(entity string) (string, string) {
+	switch entity {
+	case "activity", "lodging":
+		return "startDate", "endDate"
+	case "transportation":
+		return "departureTime", "arrivalTime"
+	default:
+		return "", ""
+	}
+}
+
+func parseAssistantTime(value string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t, nil
+	}
+	return time.Parse("2006-01-02T15:04:05", value)
+}
+
+func proposalActionType(changes []assistantChange) string {
+	if len(changes) != 1 {
+		return "batch"
+	}
+	return changes[0].Operation
+}
+
+func previewFromChange(change assistantChange) map[string]interface{} {
+	preview := map[string]interface{}{}
+	applyPreviewChange(preview, change)
+	return preview
+}
+
+func recordPreview(entity string, record *core.Record) map[string]interface{} {
+	switch entity {
+	case "activity":
+		return map[string]interface{}{
+			"id":          record.Id,
+			"name":        record.GetString("name"),
+			"description": record.GetString("description"),
+			"address":     record.GetString("address"),
+			"start_time":  formatDate(record.GetDateTime("startDate")),
+			"end_time":    formatDate(record.GetDateTime("endDate")),
+			"notes":       record.GetString("notes"),
+		}
+	case "lodging":
+		return map[string]interface{}{
+			"id":           record.Id,
+			"name":         record.GetString("name"),
+			"type":         record.GetString("type"),
+			"address":      record.GetString("address"),
+			"start_time":   formatDate(record.GetDateTime("startDate")),
+			"end_time":     formatDate(record.GetDateTime("endDate")),
+			"confirmation": record.GetString("confirmationCode"),
+			"notes":        record.GetString("notes"),
+		}
+	case "transportation":
+		return map[string]interface{}{
+			"id":             record.Id,
+			"type":           record.GetString("type"),
+			"origin":         record.GetString("origin"),
+			"destination":    record.GetString("destination"),
+			"provider":       record.GetString("provider"),
+			"departure_time": formatDate(record.GetDateTime("departureTime")),
+			"arrival_time":   formatDate(record.GetDateTime("arrivalTime")),
+			"notes":          record.GetString("notes"),
+		}
+	default:
+		return map[string]interface{}{"id": record.Id}
+	}
+}
+
+func applyPreviewChange(preview map[string]interface{}, change assistantChange) {
+	for _, field := range change.Clear {
+		preview[field] = nil
+	}
+	for field, value := range change.Fields {
+		if value != nil {
+			preview[field] = value
+		}
+	}
+}
+
+func diffPreview(before, after map[string]interface{}) []map[string]interface{} {
+	keys := map[string]bool{}
+	for key := range before {
+		keys[key] = true
+	}
+	for key := range after {
+		keys[key] = true
+	}
+	diff := make([]map[string]interface{}, 0)
+	for key := range keys {
+		if fmt.Sprintf("%v", before[key]) != fmt.Sprintf("%v", after[key]) {
+			diff = append(diff, map[string]interface{}{
+				"field":  key,
+				"before": before[key],
+				"after":  after[key],
+			})
+		}
+	}
+	sort.Slice(diff, func(i, j int) bool {
+		return stringValue(diff[i]["field"]) < stringValue(diff[j]["field"])
+	})
+	return diff
+}
+
+func previewTitle(entity string, values map[string]interface{}) string {
+	switch entity {
+	case "activity", "lodging":
+		return firstNonEmpty(stringValue(values["name"]), "Untitled "+entity)
+	case "transportation":
+		label := strings.TrimSpace(fmt.Sprintf("%s from %s to %s", stringValue(values["type"]), stringValue(values["origin"]), stringValue(values["destination"])))
+		return firstNonEmpty(label, "Transportation")
+	default:
+		return "Itinerary item"
+	}
+}
+
+func cloneMap(input map[string]interface{}) map[string]interface{} {
+	output := make(map[string]interface{}, len(input))
+	for key, value := range input {
+		output[key] = value
+	}
+	return output
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func deref(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func sendSSEEvent(writer http.ResponseWriter, flusher http.Flusher, payload interface{}) {
@@ -1556,390 +2000,4 @@ func sourceTitle(source map[string]interface{}) string {
 		}
 	}
 	return ""
-}
-
-func buildAssistantTools() []map[string]interface{} {
-	tools := []map[string]interface{}{
-		{
-			"type": "web_search",
-		},
-	}
-	tools = append(tools, assistantFunctionTools()...)
-	return tools
-}
-
-func assistantFunctionTools() []map[string]interface{} {
-	return []map[string]interface{}{
-		{
-			"type":        "function",
-			"name":        assistantToolCreateActivity,
-			"description": "Propose creating a new activity or itinerary item for this trip. Infer missing details (location, end time, etc.) from the trip context when the user leaves gaps, and clearly mention any assumptions you make.",
-			"parameters": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"name":        map[string]interface{}{"type": "string", "description": "Activity title"},
-					"description": map[string]interface{}{"type": "string", "description": "Optional notes or details"},
-					"address":     map[string]interface{}{"type": "string", "description": "Location or address (required in the form)"},
-					"destination": map[string]interface{}{
-						"type":        "object",
-						"description": "Destination/place metadata (matches the Destination picker in the UI)",
-						"properties": map[string]interface{}{
-							"name":      map[string]interface{}{"type": "string"},
-							"country":   map[string]interface{}{"type": "string"},
-							"state":     map[string]interface{}{"type": "string"},
-							"latitude":  map[string]interface{}{"type": "string"},
-							"longitude": map[string]interface{}{"type": "string"},
-							"timezone":  map[string]interface{}{"type": "string"},
-							"category":  map[string]interface{}{"type": "string"},
-							"place_id":  map[string]interface{}{"type": "string"},
-						},
-					},
-					"start_time": map[string]interface{}{
-						"type":        "string",
-						"description": "Start time in RFC3339 format (local time of the location).",
-					},
-					"end_time": map[string]interface{}{
-						"type":        "string",
-						"description": "End time in RFC3339 format (local time).",
-					},
-					"notes":      map[string]interface{}{"type": "string", "description": "Internal notes/reminders"},
-					"cost_value": map[string]interface{}{"type": "number", "description": "Estimated cost numeric value"},
-					"cost_currency": map[string]interface{}{
-						"type":        "string",
-						"description": "Currency code for the cost (e.g., USD, EUR)",
-					},
-				},
-				"required":             []string{"name", "address", "start_time"},
-				"additionalProperties": false,
-			},
-		},
-		{
-			"type":        "function",
-			"name":        assistantToolUpdateActivity,
-			"description": "Update an existing activity. Always include the record_id shown in the trip context and provide only the fields that should change. Mention assumptions if you infer details.",
-			"parameters": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"record_id":   map[string]interface{}{"type": "string", "description": "Activity ID"},
-					"name":        map[string]interface{}{"type": "string"},
-					"description": map[string]interface{}{"type": "string"},
-					"address":     map[string]interface{}{"type": "string"},
-					"destination": map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"name":      map[string]interface{}{"type": "string"},
-							"country":   map[string]interface{}{"type": "string"},
-							"state":     map[string]interface{}{"type": "string"},
-							"latitude":  map[string]interface{}{"type": "string"},
-							"longitude": map[string]interface{}{"type": "string"},
-							"timezone":  map[string]interface{}{"type": "string"},
-							"category":  map[string]interface{}{"type": "string"},
-							"place_id":  map[string]interface{}{"type": "string"},
-						},
-					},
-					"start_time":    map[string]interface{}{"type": "string"},
-					"end_time":      map[string]interface{}{"type": "string"},
-					"notes":         map[string]interface{}{"type": "string"},
-					"cost_value":    map[string]interface{}{"type": "number"},
-					"cost_currency": map[string]interface{}{"type": "string"},
-				},
-				"required":             []string{"record_id"},
-				"additionalProperties": false,
-			},
-		},
-		{
-			"type":        "function",
-			"name":        assistantToolDeleteActivity,
-			"strict":      true,
-			"description": "Delete an existing activity by record_id when the traveler asks to remove it.",
-			"parameters": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"record_id": map[string]interface{}{"type": "string"},
-					"reason":    map[string]interface{}{"type": []string{"string", "null"}, "description": "Optional reason/reminder"},
-				},
-				"required":             []string{"record_id", "reason"},
-				"additionalProperties": false,
-			},
-		},
-		{
-			"type":        "function",
-			"name":        assistantToolCreateLodging,
-			"description": "Propose adding a lodging or stay (hotel, rental, etc.) to this trip.",
-			"parameters": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"name":       map[string]interface{}{"type": "string", "description": "Property name"},
-					"type":       map[string]interface{}{"type": "string", "enum": []string{"hotel", "home", "vacation_rental", "camp_site"}, "description": "Lodging type"},
-					"address":    map[string]interface{}{"type": "string", "description": "Address or area"},
-					"start_time": map[string]interface{}{"type": "string", "description": "Check-in time/date in RFC3339"},
-					"end_time":   map[string]interface{}{"type": "string", "description": "Check-out time/date in RFC3339"},
-					"confirmation": map[string]interface{}{
-						"type":        "string",
-						"description": "Confirmation number or reservation code",
-					},
-					"notes": map[string]interface{}{"type": "string", "description": "Extra notes or reminders"},
-				},
-				"required":             []string{"name", "start_time", "end_time"},
-				"additionalProperties": false,
-			},
-		},
-		{
-			"type":        "function",
-			"name":        assistantToolUpdateLodging,
-			"description": "Update an existing lodging entry. Always include record_id.",
-			"parameters": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"record_id":    map[string]interface{}{"type": "string"},
-					"name":         map[string]interface{}{"type": "string"},
-					"type":         map[string]interface{}{"type": "string"},
-					"address":      map[string]interface{}{"type": "string"},
-					"start_time":   map[string]interface{}{"type": "string"},
-					"end_time":     map[string]interface{}{"type": "string"},
-					"confirmation": map[string]interface{}{"type": "string"},
-					"notes":        map[string]interface{}{"type": "string"},
-				},
-				"required":             []string{"record_id"},
-				"additionalProperties": false,
-			},
-		},
-		{
-			"type":        "function",
-			"name":        assistantToolDeleteLodging,
-			"strict":      true,
-			"description": "Delete an existing lodging entry.",
-			"parameters": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"record_id": map[string]interface{}{"type": "string"},
-					"reason":    map[string]interface{}{"type": []string{"string", "null"}},
-				},
-				"required":             []string{"record_id", "reason"},
-				"additionalProperties": false,
-			},
-		},
-		{
-			"type":        "function",
-			"name":        assistantToolCreateTransportation,
-			"description": "Propose a transportation segment (flight, train, transfer, etc.). Infer missing destination or arrival details from the context when the traveler is vague, and mention assumptions.",
-			"parameters": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"type":        map[string]interface{}{"type": "string", "enum": []string{"flight", "car", "bus", "boat", "train", "rental_car", "bike", "parking"}, "description": "Transportation type"},
-					"provider":    map[string]interface{}{"type": "string", "description": "Carrier or provider"},
-					"origin":      map[string]interface{}{"type": "string", "description": "Origin city or location"},
-					"destination": map[string]interface{}{"type": "string", "description": "Destination city or location"},
-					"departure_time": map[string]interface{}{
-						"type":        "string",
-						"description": "Departure time in RFC3339",
-					},
-					"arrival_time": map[string]interface{}{
-						"type":        "string",
-						"description": "Arrival time in RFC3339",
-					},
-					"notes": map[string]interface{}{"type": "string", "description": "Extra notes (confirmation, seats, etc.)"},
-				},
-				"required":             []string{"type", "origin", "departure_time"},
-				"additionalProperties": false,
-			},
-		},
-		{
-			"type":        "function",
-			"name":        assistantToolUpdateTransportation,
-			"description": "Update an existing transportation entry. Include the record_id and any fields that need to change.",
-			"parameters": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"record_id":      map[string]interface{}{"type": "string"},
-					"type":           map[string]interface{}{"type": "string"},
-					"provider":       map[string]interface{}{"type": "string"},
-					"origin":         map[string]interface{}{"type": "string"},
-					"destination":    map[string]interface{}{"type": "string"},
-					"departure_time": map[string]interface{}{"type": "string"},
-					"arrival_time":   map[string]interface{}{"type": "string"},
-					"notes":          map[string]interface{}{"type": "string"},
-				},
-				"required":             []string{"record_id"},
-				"additionalProperties": false,
-			},
-		},
-		{
-			"type":        "function",
-			"name":        assistantToolDeleteTransportation,
-			"strict":      true,
-			"description": "Delete a transportation entry by record_id.",
-			"parameters": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"record_id": map[string]interface{}{"type": "string"},
-					"reason":    map[string]interface{}{"type": []string{"string", "null"}},
-				},
-				"required":             []string{"record_id", "reason"},
-				"additionalProperties": false,
-			},
-		},
-	}
-}
-
-func storeAssistantProposal(proposal *assistantProposal) {
-	proposalStore.Lock()
-	defer proposalStore.Unlock()
-	proposalStore.items[proposal.ID] = proposal
-}
-
-func popAssistantProposal(id string) (*assistantProposal, bool) {
-	proposalStore.Lock()
-	defer proposalStore.Unlock()
-	proposal, ok := proposalStore.items[id]
-	if ok {
-		delete(proposalStore.items, id)
-	}
-	return proposal, ok
-}
-
-func getAssistantProposal(id string) (*assistantProposal, bool) {
-	proposalStore.RLock()
-	defer proposalStore.RUnlock()
-	proposal, ok := proposalStore.items[id]
-	return proposal, ok
-}
-
-func summarizeProposal(tool string, args map[string]interface{}) string {
-	switch tool {
-	case assistantToolCreateActivity:
-		return fmt.Sprintf("I'll add an activity \"%s\" starting %s.", stringValue(args["name"]), stringValue(args["start_time"]))
-	case assistantToolUpdateActivity:
-		return fmt.Sprintf("I'll update activity %s.", stringValue(args["record_id"]))
-	case assistantToolDeleteActivity:
-		return fmt.Sprintf("I'll delete activity %s.", stringValue(args["record_id"]))
-	case assistantToolCreateLodging:
-		return fmt.Sprintf("I'll add lodging \"%s\" from %s to %s.", stringValue(args["name"]), stringValue(args["start_time"]), stringValue(args["end_time"]))
-	case assistantToolUpdateLodging:
-		return fmt.Sprintf("I'll update lodging %s.", stringValue(args["record_id"]))
-	case assistantToolDeleteLodging:
-		return fmt.Sprintf("I'll delete lodging %s.", stringValue(args["record_id"]))
-	case assistantToolCreateTransportation:
-		return fmt.Sprintf("I'll add %s from %s to %s departing %s.", stringValue(args["type"]), stringValue(args["origin"]), stringValue(args["destination"]), stringValue(args["departure_time"]))
-	case assistantToolUpdateTransportation:
-		return fmt.Sprintf("I'll update transportation %s.", stringValue(args["record_id"]))
-	case assistantToolDeleteTransportation:
-		return fmt.Sprintf("I'll delete transportation %s.", stringValue(args["record_id"]))
-	default:
-		return "I have a change ready to apply."
-	}
-}
-
-func (p *assistantProposal) expired() bool {
-	return time.Now().UTC().After(p.ExpiresAt)
-}
-
-func parseOpenAIError(resp *http.Response) error {
-	data, err := io.ReadAll(resp.Body)
-	if err != nil || len(data) == 0 {
-		return fmt.Errorf("openai api error: %s", resp.Status)
-	}
-
-	var payload map[string]interface{}
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return fmt.Errorf("openai api error: %s", resp.Status)
-	}
-
-	if errField, ok := payload["error"].(map[string]interface{}); ok {
-		msg := stringValue(errField["message"])
-		if msg != "" {
-			return errors.New(msg)
-		}
-	}
-
-	return fmt.Errorf("openai api error: %s", resp.Status)
-}
-
-func extractFallbackOutput(response responsesAPIResponse) string {
-	for _, message := range response.Output {
-		for _, block := range message.Content {
-			if block.Type == "output_text" && strings.TrimSpace(block.Text) != "" {
-				return strings.TrimSpace(block.Text)
-			}
-		}
-	}
-	return ""
-}
-
-type functionCallBuffer struct {
-	active   bool
-	name     string
-	itemID   string
-	builder  strings.Builder
-	proposal *assistantProposal
-}
-
-func (b *functionCallBuffer) handleOutputItemAdded(item map[string]interface{}) {
-	itemType := stringValue(item["type"])
-	if itemType != "function_call" {
-		return
-	}
-	b.active = true
-	b.name = stringValue(item["name"])
-	b.itemID = stringValue(item["id"])
-	b.builder.Reset()
-}
-
-func (b *functionCallBuffer) handleArgumentsDelta(event map[string]interface{}) {
-	if !b.active {
-		return
-	}
-	itemID := stringValue(event["item_id"])
-	if itemID != "" && itemID != b.itemID {
-		return
-	}
-	delta, _ := event["delta"].(string)
-	if delta != "" {
-		b.builder.WriteString(delta)
-	}
-}
-
-func (b *functionCallBuffer) finalizeProposal(event map[string]interface{}, tripID string) (map[string]interface{}, bool) {
-	if !b.active {
-		return nil, false
-	}
-	itemID := stringValue(event["item_id"])
-	if itemID != "" && itemID != b.itemID {
-		return nil, false
-	}
-
-	argsJSON := strings.TrimSpace(b.builder.String())
-	if argsJSON == "" {
-		return nil, false
-	}
-
-	var args map[string]interface{}
-	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return nil, false
-	}
-
-	proposal := &assistantProposal{
-		ID:        uuid.NewString(),
-		TripID:    tripID,
-		Tool:      b.name,
-		Arguments: args,
-		CreatedAt: time.Now().UTC(),
-		ExpiresAt: time.Now().UTC().Add(proposalTTL),
-	}
-	storeAssistantProposal(proposal)
-	summary := summarizeProposal(proposal.Tool, proposal.Arguments)
-	b.active = false
-	b.builder.Reset()
-	b.itemID = ""
-
-	return map[string]interface{}{
-		"type": "proposal",
-		"proposal": map[string]interface{}{
-			"id":        proposal.ID,
-			"tool":      proposal.Tool,
-			"arguments": proposal.Arguments,
-			"summary":   summary,
-			"expiresAt": proposal.ExpiresAt.Format(time.RFC3339),
-		},
-	}, true
 }

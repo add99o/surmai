@@ -1,6 +1,6 @@
 import { pb, pbAdmin } from './pocketbase.ts';
 
-import type { AssistantMessage } from '../../../types/assistant.ts';
+import type { AssistantMessage, AssistantProposal, AssistantProposalDecision } from '../../../types/assistant.ts';
 
 export const sendTestPrompt = (prompt: string) => {
   return pbAdmin
@@ -57,5 +57,34 @@ export const createTripAssistantMessage = (
 export const clearTripAssistantMessages = (tripId: string): Promise<{ deleted: number }> => {
   return pb.send(`/api/surmai/trip/${tripId}/assistant/messages`, {
     method: 'DELETE',
+  });
+};
+
+export const listTripAssistantProposals = (tripId: string): Promise<AssistantProposal[]> => {
+  return pb
+    .send(`/api/surmai/trip/${tripId}/assistant/proposals`, {
+      method: 'GET',
+    })
+    .then((result) => result.proposals || []);
+};
+
+export const decideTripAssistantProposal = (
+  tripId: string,
+  proposalId: string,
+  decision: AssistantProposalDecision
+): Promise<{ status: string; message?: string; proposal?: AssistantProposal }> => {
+  return pb.send(`/api/surmai/trip/${tripId}/assistant/proposals/${proposalId}/decision`, {
+    method: 'POST',
+    body: { decision },
+  });
+};
+
+export const retryTripAssistantProposal = (
+  tripId: string,
+  proposalId: string
+): Promise<{ status: string; message?: string; proposal?: AssistantProposal }> => {
+  return pb.send(`/api/surmai/trip/${tripId}/assistant/proposals/${proposalId}/retry`, {
+    method: 'POST',
+    body: {},
   });
 };

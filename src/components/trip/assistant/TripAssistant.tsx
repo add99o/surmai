@@ -1,41 +1,70 @@
-import { ActionIcon, Alert, Box, Button, Group, Loader, Paper, Stack, Text, Textarea, Tooltip } from '@mantine/core';
-import { IconAlertCircle, IconExternalLink, IconSend, IconTrash } from '@tabler/icons-react';
+import {
+  ActionIcon,
+  Alert,
+  Badge,
+  Box,
+  Button,
+  Group,
+  Loader,
+  Paper,
+  ScrollArea,
+  Stack,
+  Text,
+  Textarea,
+  Timeline,
+  Tooltip,
+} from '@mantine/core';
+import {
+  IconAlertCircle,
+  IconCheck,
+  IconExternalLink,
+  IconRefresh,
+  IconSend,
+  IconTrash,
+  IconX,
+} from '@tabler/icons-react';
 import { nanoid } from 'nanoid';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useQueryClient } from '@tanstack/react-query';
 import DOMPurify from 'dompurify';
 import dayjs from 'dayjs';
 
-import { clearTripAssistantMessages, createTripAssistantMessage, listTripAssistantMessages } from '../../../lib/api';
+import {
+  clearTripAssistantMessages,
+  decideTripAssistantProposal,
+  listTripAssistantMessages,
+  listTripAssistantProposals,
+  retryTripAssistantProposal,
+} from '../../../lib/api';
 import { pb } from '../../../lib/api/pocketbase/pocketbase.ts';
 import { formatDate } from '../../../lib/time.ts';
 import classes from './TripAssistant.module.css';
 
-import type { AssistantMessage, AssistantSource } from '../../../types/assistant.ts';
+import type {
+  AssistantMessage,
+  AssistantProposal,
+  AssistantProposalDecision,
+  AssistantProposalPreviewChange,
+  AssistantSource,
+  AssistantStreamEvent,
+} from '../../../types/assistant.ts';
 import type { Trip } from '../../../types/trips.ts';
 
 type TripAssistantProps = {
   trip: Trip;
 };
 
-type AssistantProposal = {
-  id: string;
-  tool: string;
-  arguments: Record<string, any>;
-  summary: string;
-  expiresAt: string;
-};
-
-type ProposalDecision = 'approve' | 'decline' | 'timeout';
-
 export const TripAssistant = ({ trip }: TripAssistantProps) => {
   const { t, i18n } = useTranslation();
+  const queryClient = useQueryClient();
   const [input, setInput] = useState('');
+  const [messages, setMessages] = useState<AssistantMessage[]>([]);
+  const [proposals, setProposals] = useState<AssistantProposal[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
-  const [pendingProposal, setPendingProposal] = useState<AssistantProposal | null>(null);
-  const [proposalCountdown, setProposalCountdown] = useState<number>(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [applyingProposalId, setApplyingProposalId] = useState<string | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<AbortController | null>(null);
 
@@ -43,127 +72,93 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
     () => ({
       id: 'assistant-intro',
       role: 'assistant',
-      content: t('assistant_intro', 'Hi! I am your Surmai AI guide for {{tripName}}. Ask me about your plans, timing, or get suggestions.', {
+      content: t('assistant_intro', 'Hi! I am your Surmai AI guide for {{tripName}}. Ask me about your plans, timing, or itinerary changes.', {
         tripName: trip.name,
       }),
     }),
     [t, trip.name]
   );
 
-  const [messages, setMessages] = useState<AssistantMessage[]>([]);
-
   useEffect(() => {
     let ignore = false;
     setError(null);
     setInput('');
-    setPendingProposal(null);
-    setIsLoadingMessages(true);
-
-    listTripAssistantMessages(trip.id)
-      .then((storedMessages) => {
+    setIsLoading(true);
+    Promise.all([listTripAssistantMessages(trip.id), listTripAssistantProposals(trip.id)])
+      .then(([storedMessages, storedProposals]) => {
         if (!ignore) {
           setMessages(storedMessages);
+          setProposals(storedProposals);
         }
       })
       .catch((err) => {
         if (!ignore) {
-          const fallback = t('assistant_history_load_failed', 'Unable to load assistant history.');
-          setError(resolveAssistantError(err, fallback));
-          setMessages([]);
+          setError(resolveAssistantError(err, t('assistant_history_load_failed', 'Unable to load assistant history.')));
         }
       })
       .finally(() => {
         if (!ignore) {
-          setIsLoadingMessages(false);
+          setIsLoading(false);
         }
       });
-
     return () => {
       ignore = true;
     };
   }, [t, trip.id]);
 
   useEffect(() => {
-    const el = viewportRef.current;
-    if (el) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [messages, introMessage]);
+    viewportRef.current?.scrollTo({ top: viewportRef.current.scrollHeight });
+  }, [messages, proposals, introMessage]);
 
   useEffect(() => {
-    return () => {
-      controllerRef.current?.abort();
-    };
+    return () => controllerRef.current?.abort();
   }, []);
 
-  useEffect(() => {
-    if (!pendingProposal) {
-      setProposalCountdown(0);
-      return;
-    }
+  const activeProposal = proposals.find((proposal) => proposal.status === 'pending' || proposal.status === 'applying');
+  const isApplying = !!applyingProposalId;
 
-    let timeoutHandled = false;
-    const expires = dayjs(pendingProposal.expiresAt);
+  const refreshProposals = async () => {
+    setProposals(await listTripAssistantProposals(trip.id));
+  };
 
-    const updateCountdown = () => {
-      const diff = expires.diff(dayjs(), 'second');
-      if (diff <= 0) {
-        setProposalCountdown(0);
-        if (!timeoutHandled) {
-          timeoutHandled = true;
-          void handleProposalDecision('timeout');
-        }
-        return;
-      }
-      setProposalCountdown(diff);
-    };
-
-    updateCountdown();
-    const interval = window.setInterval(updateCountdown, 1000);
-    return () => window.clearInterval(interval);
-  }, [pendingProposal]);
+  const invalidateItinerary = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['buildActivitiesIndex', trip.id] }),
+      queryClient.invalidateQueries({ queryKey: ['buildTransportationIndex', trip.id] }),
+      queryClient.invalidateQueries({ queryKey: ['buildLodgingIndex', trip.id] }),
+      queryClient.invalidateQueries({ queryKey: ['listActivities', trip.id] }),
+      queryClient.invalidateQueries({ queryKey: ['listTransportations', trip.id] }),
+      queryClient.invalidateQueries({ queryKey: ['listLodgings', trip.id] }),
+      queryClient.invalidateQueries({ queryKey: ['trip', trip.id] }),
+    ]);
+  };
 
   const handleSend = async () => {
-    if (!input.trim() || isStreaming) {
+    const content = input.trim();
+    if (!content || isStreaming || activeProposal || isApplying) {
+      if (activeProposal) {
+        setError(t('assistant_pending_warning', 'Please approve or reject the pending change first.'));
+      }
       return;
     }
-    if (pendingProposal) {
-      setError(t('assistant_pending_warning', 'Please approve or decline the pending change first.'));
-      return;
-    }
-
-    const userMessage: AssistantMessage = {
-      id: nanoid(),
-      role: 'user',
-      content: input.trim(),
-    };
 
     const assistantId = nanoid();
-    const assistantPlaceholder: AssistantMessage = {
-      id: assistantId,
-      role: 'assistant',
-      content: '',
-    };
-
-    let savedUserMessage = userMessage;
-    try {
-      savedUserMessage = await createTripAssistantMessage(trip.id, userMessage);
-    } catch (err) {
-      const fallback = t('assistant_history_save_failed', 'Unable to save your message.');
-      setError(resolveAssistantError(err, fallback));
-      return;
-    }
-
-    const nextConversation = [...messages, savedUserMessage];
-    setMessages((prev) => [...prev, savedUserMessage, assistantPlaceholder]);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+      },
+    ]);
     setInput('');
     setError(null);
 
     try {
-      await streamAssistantReply(nextConversation, assistantId);
+      await streamAssistantReply(content, assistantId);
+      await refreshProposals();
     } catch (err) {
-      const fallback = t('assistant_generic_error', 'Unable to reach the assistant. Please try again.');
-      setError(resolveAssistantError(err, fallback));
+      setError(resolveAssistantError(err, t('assistant_generic_error', 'Unable to reach the assistant. Please try again.')));
       setMessages((prev) =>
         prev.map((message) =>
           message.id === assistantId ? { ...message, content: t('assistant_error_short', 'Something went wrong.') } : message
@@ -172,7 +167,7 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
     }
   };
 
-  const streamAssistantReply = async (conversation: AssistantMessage[], assistantId: string) => {
+  const streamAssistantReply = async (content: string, assistantId: string) => {
     setIsStreaming(true);
     const controller = new AbortController();
     controllerRef.current = controller;
@@ -181,13 +176,12 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
       const response = await fetch(`/api/surmai/trip/${trip.id}/assistant/stream`, {
         method: 'POST',
         headers: buildAuthHeaders(),
-        body: JSON.stringify({ messages: conversation }),
+        body: JSON.stringify({ messages: [{ role: 'user', content }] }),
         signal: controller.signal,
       });
 
       if (!response.ok || !response.body) {
-        const message = await response.text();
-        throw new Error(message || 'Assistant stream failed.');
+        throw new Error((await response.text()) || 'Assistant stream failed.');
       }
 
       const reader = response.body.getReader();
@@ -200,41 +194,12 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
           break;
         }
         buffer += decoder.decode(value, { stream: true });
-        const { events, remaining } = parseSSEPayloads(buffer);
-        buffer = remaining;
-        for (const event of events) {
-          if (event.type === 'proposal' && event.proposal) {
-            const proposal = event.proposal as AssistantProposal;
-            setPendingProposal(proposal);
-            setMessages((prev) =>
-              prev.map((message) =>
-                message.id === assistantId
-                  ? { ...message, content: proposal.summary }
-                  : message
-              )
-            );
-            await reader.cancel().catch(() => undefined);
+        const parsed = parseSSEPayloads(buffer);
+        buffer = parsed.remaining;
+        for (const event of parsed.events) {
+          handleStreamEvent(event, assistantId);
+          if (event.type === 'done') {
             return;
-          }
-          if (event.type === 'delta' && event.text) {
-            appendAssistantText(assistantId, event.text);
-          } else if (event.type === 'sources' && Array.isArray(event.sources)) {
-            appendAssistantSources(assistantId, event.sources as AssistantSource[]);
-          } else if (event.type === 'error') {
-            throw new Error(event.message || 'Assistant stream failed.');
-          } else if (event.type === 'done') {
-            return;
-          }
-        }
-      }
-
-      if (buffer.trim()) {
-        const { events } = parseSSEPayloads(buffer + '\n\n');
-        for (const event of events) {
-          if (event.type === 'delta' && event.text) {
-            appendAssistantText(assistantId, event.text);
-          } else if (event.type === 'sources' && Array.isArray(event.sources)) {
-            appendAssistantSources(assistantId, event.sources as AssistantSource[]);
           }
         }
       }
@@ -244,17 +209,47 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
     }
   };
 
+  const handleStreamEvent = (event: AssistantStreamEvent, assistantId: string) => {
+    if (event.type === 'message_created') {
+      setMessages((prev) => {
+        const withoutDuplicate = prev.filter((message) => message.id !== event.message.id);
+        const assistantIndex = withoutDuplicate.findIndex((message) => message.id === assistantId);
+        if (assistantIndex === -1) {
+          return [...withoutDuplicate, event.message];
+        }
+        return [
+          ...withoutDuplicate.slice(0, assistantIndex),
+          event.message,
+          ...withoutDuplicate.slice(assistantIndex),
+        ];
+      });
+      return;
+    }
+    if (event.type === 'text_delta') {
+      appendAssistantText(assistantId, event.text);
+      return;
+    }
+    if (event.type === 'sources') {
+      appendAssistantSources(assistantId, event.sources);
+      return;
+    }
+    if (event.type === 'proposal_created') {
+      setProposals((prev) => [...prev.filter((proposal) => proposal.id !== event.proposal.id), event.proposal]);
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === assistantId ? { ...message, content: event.proposal.summary || t('assistant_pending_change', 'Pending change') } : message
+        )
+      );
+      return;
+    }
+    if (event.type === 'error') {
+      throw new Error(event.message || 'Assistant stream failed.');
+    }
+  };
+
   const appendAssistantText = (assistantId: string, chunk: string) => {
     setMessages((prev) =>
-      prev.map((message) => {
-        if (message.id === assistantId) {
-          return {
-            ...message,
-            content: message.content + chunk,
-          };
-        }
-        return message;
-      })
+      prev.map((message) => (message.id === assistantId ? { ...message, content: message.content + chunk } : message))
     );
   };
 
@@ -271,235 +266,184 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
             nextSources.push(source);
           }
         });
-        return {
-          ...message,
-          metadata: {
-            ...message.metadata,
-            sources: nextSources,
-          },
-        };
+        return { ...message, metadata: { ...message.metadata, sources: nextSources } };
       })
     );
   };
 
-  const handleProposalDecision = async (decision: ProposalDecision) => {
-    if (!pendingProposal) {
-      return;
-    }
-    setIsStreaming(true);
+  const handleProposalDecision = async (proposal: AssistantProposal, decision: AssistantProposalDecision) => {
+    setApplyingProposalId(proposal.id);
+    setError(null);
     try {
-      const response = await fetch(
-        `/api/surmai/trip/${trip.id}/assistant/proposals/${pendingProposal.id}/decision`,
-        {
-          method: 'POST',
-          headers: buildAuthHeaders(),
-          body: JSON.stringify({ decision }),
-        }
-      );
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload?.error || 'Unable to process the decision.');
+      const payload =
+        decision === 'approve' || decision === 'reject' || decision === 'decline' || decision === 'timeout'
+          ? await decideTripAssistantProposal(trip.id, proposal.id, decision)
+          : undefined;
+      if (payload?.proposal) {
+        setProposals((prev) => prev.map((item) => (item.id === proposal.id ? payload.proposal! : item)));
       }
-
       if (payload?.message) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: nanoid(),
-            role: 'assistant',
-            content: payload.message as string,
-          },
-        ]);
+        setMessages((prev) => [...prev, { id: nanoid(), role: 'assistant', content: payload.message! }]);
       }
+      if (decision === 'approve') {
+        await invalidateItinerary();
+      }
+      await refreshProposals();
     } catch (err) {
-      const fallback = t('assistant_generic_error', 'Unable to reach the assistant. Please try again.');
-      setError(resolveAssistantError(err, fallback));
+      setError(resolveAssistantError(err, t('assistant_generic_error', 'Unable to reach the assistant. Please try again.')));
+      await refreshProposals().catch(() => undefined);
     } finally {
-      setPendingProposal(null);
-      setIsStreaming(false);
+      setApplyingProposalId(null);
     }
   };
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      handleSend();
+  const handleProposalRetry = async (proposal: AssistantProposal) => {
+    setApplyingProposalId(proposal.id);
+    setError(null);
+    try {
+      const payload = await retryTripAssistantProposal(trip.id, proposal.id);
+      if (payload.proposal) {
+        setProposals((prev) => prev.map((item) => (item.id === proposal.id ? payload.proposal! : item)));
+      }
+      if (payload.message) {
+        setMessages((prev) => [...prev, { id: nanoid(), role: 'assistant', content: payload.message! }]);
+      }
+      await invalidateItinerary();
+      await refreshProposals();
+    } catch (err) {
+      setError(resolveAssistantError(err, t('assistant_generic_error', 'Unable to reach the assistant. Please try again.')));
+      await refreshProposals().catch(() => undefined);
+    } finally {
+      setApplyingProposalId(null);
     }
   };
 
   const handleClearChat = async () => {
-    if (isStreaming) {
+    if (isStreaming || isApplying) {
       return;
     }
     setError(null);
     try {
       await clearTripAssistantMessages(trip.id);
       setMessages([]);
-      setPendingProposal(null);
+      await refreshProposals();
     } catch (err) {
-      const fallback = t('assistant_clear_failed', 'Unable to clear assistant history.');
-      setError(resolveAssistantError(err, fallback));
+      setError(resolveAssistantError(err, t('assistant_clear_failed', 'Unable to clear assistant history.')));
     }
   };
 
-  const conversationWithGreeting: AssistantMessage[] = [introMessage, ...messages];
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      void handleSend();
+    }
+  };
+
+  const timelineMessages = [introMessage, ...messages].filter((message) => message.content.trim());
+  const visibleProposals = proposals.filter((proposal) => proposal.status !== 'expired' || dayjs(proposal.updated).isAfter(dayjs().subtract(1, 'day')));
 
   return (
     <Stack gap="md" mt="md" className={classes.assistantWorkspace}>
-      <Stack gap={4} className={classes.headerBlock}>
-        <Group justify="space-between" align="flex-start">
-          <Text fw={600} className={classes.tripTitle}>
-            {trip.name}
-          </Text>
+      <Paper withBorder className={classes.contextHeader}>
+        <Group justify="space-between" align="flex-start" gap="md">
+          <Stack gap={3}>
+            <Text fw={700} className={classes.tripTitle}>
+              {trip.name}
+            </Text>
+            <Text size="sm" c="dimmed">
+              {t('assistant_trip_summary', 'Planning window: {{start}} to {{end}}', {
+                start: formatDate(i18n.language, trip.startDate),
+                end: formatDate(i18n.language, trip.endDate),
+              })}
+            </Text>
+          </Stack>
           <Tooltip label={t('assistant_clear_chat', 'Clear chat')}>
             <ActionIcon
               variant="subtle"
               color="red"
-              size="sm"
               onClick={handleClearChat}
-              disabled={isStreaming || isLoadingMessages || messages.length === 0}
+              disabled={isStreaming || isLoading || isApplying || messages.length === 0}
               aria-label={t('assistant_clear_chat', 'Clear chat')}
             >
-              <IconTrash size={16} />
+              <IconTrash size={17} />
             </ActionIcon>
           </Tooltip>
         </Group>
-        <Text size="sm" c="dimmed">
-          {t('assistant_trip_summary', 'Planning window: {{start}} -> {{end}}', {
-            start: formatDate(i18n.language, trip.startDate),
-            end: formatDate(i18n.language, trip.endDate),
-          })}
-        </Text>
-        <Text size="sm" c="dimmed">
-          {t(
-            'assistant_context_notice',
-            'The assistant sees your latest itinerary, destinations, expenses, and notes to keep answers grounded.'
-          )}
-        </Text>
-      </Stack>
+      </Paper>
 
       {error && (
-        <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light" title={t('assistant_error', 'Assistant error')} onClose={() => setError(null)} withCloseButton>
+        <Alert
+          icon={<IconAlertCircle size={16} />}
+          color="red"
+          variant="light"
+          title={t('assistant_error', 'Assistant error')}
+          onClose={() => setError(null)}
+          withCloseButton
+        >
           {error}
         </Alert>
       )}
 
-      <Paper withBorder={false} p={0} className={classes.chatScroller}>
-        <Box ref={viewportRef} className={classes.chatViewport}>
-          <Stack gap="sm">
-            {isLoadingMessages && (
-              <Group gap="xs">
-                <Loader size="sm" />
+      <Paper withBorder={false} p={0} className={classes.timelineShell}>
+        <ScrollArea viewportRef={viewportRef} className={classes.timelineViewport}>
+          <Timeline active={timelineMessages.length + visibleProposals.length} bulletSize={22} lineWidth={1}>
+            {isLoading && (
+              <Timeline.Item bullet={<Loader size={12} />}>
                 <Text size="sm" c="dimmed">
                   {t('assistant_history_loading', 'Loading assistant history...')}
                 </Text>
-              </Group>
+              </Timeline.Item>
             )}
-            {conversationWithGreeting.map((message) => (
-              <Paper
-                key={message.id}
-                className={`${classes.chatBubble} ${
-                  message.role === 'assistant' ? classes.assistantBubble : classes.userBubble
-                }`}
-              >
-                <Text
-                  size="xs"
-                  fw={700}
-                  className={`${classes.messageMeta} ${
-                    message.role === 'assistant' ? classes.messageMetaAssistant : classes.messageMetaUser
-                  }`}
-                >
-                  {message.role === 'assistant' ? t('assistant_label', 'Assistant') : t('you', 'You')}
-                </Text>
-                <Box
-                  className={classes.messageBody}
-                  dangerouslySetInnerHTML={{ __html: sanitizeMarkdown(message.content) }}
+            {timelineMessages.map((message) => (
+              <Timeline.Item key={message.id || message.content} bullet={message.role === 'assistant' ? 'A' : 'Y'}>
+                {renderMessage(message, t)}
+              </Timeline.Item>
+            ))}
+            {visibleProposals.map((proposal) => (
+              <Timeline.Item key={proposal.id} bullet={<ProposalBullet proposal={proposal} />}>
+                <ProposalCard
+                  proposal={proposal}
+                  applying={applyingProposalId === proposal.id}
+                  onApprove={() => handleProposalDecision(proposal, 'approve')}
+                  onReject={() => handleProposalDecision(proposal, 'reject')}
+                  onRetry={() => handleProposalRetry(proposal)}
                 />
-                {message.metadata?.sources && message.metadata.sources.length > 0 && (
-                  <Stack gap={6} mt="xs" className={classes.sourcesList}>
-                    <Text size="xs" fw={700}>
-                      {t('assistant_sources', 'Sources')}
-                    </Text>
-                    <Group gap={6}>
-                      {message.metadata.sources.map((source, index) => (
-                        <a key={source.url} href={source.url} target="_blank" rel="noreferrer" className={classes.sourceChip}>
-                          <span className={classes.sourceIndex}>{index + 1}</span>
-                          <span className={classes.sourceLabel}>{sourceLabel(source)}</span>
-                          <IconExternalLink size={12} />
-                        </a>
-                      ))}
-                    </Group>
-                  </Stack>
-                )}
-              </Paper>
+              </Timeline.Item>
             ))}
             {isStreaming && (
-              <Group gap="xs">
-                <Loader size="sm" />
+              <Timeline.Item bullet={<Loader size={12} />}>
                 <Text size="sm" c="dimmed">
                   {t('assistant_typing_indicator', 'Generating reply...')}
                 </Text>
-              </Group>
+              </Timeline.Item>
             )}
-          </Stack>
-        </Box>
+          </Timeline>
+        </ScrollArea>
       </Paper>
-
-      {pendingProposal && (
-        <Paper withBorder radius="lg" className={classes.proposalCard}>
-          <Stack gap="sm">
-            <Group justify="space-between" align="flex-start">
-              <div>
-                <Text fw={600}>{t('assistant_pending_change', 'Pending change')}</Text>
-                <Text size="sm" c="dimmed">
-                  {pendingProposal.summary}
-                </Text>
-              </div>
-              <Text size="sm" className={classes.proposalCountdown}>
-                {proposalCountdown > 0
-                  ? t('proposal_expires_in', { defaultValue: '{{count}}s left', count: proposalCountdown })
-                  : t('proposal_expired', 'Expired')}
-              </Text>
-            </Group>
-            {renderProposalDetails(pendingProposal)}
-            <Group justify="flex-end" className={classes.proposalActions}>
-              <Button
-                variant="light"
-                onClick={() => handleProposalDecision('decline')}
-                disabled={isStreaming}
-              >
-                {t('assistant_decline', 'Decline')}
-              </Button>
-              <Button onClick={() => handleProposalDecision('approve')} disabled={isStreaming}>
-                {t('assistant_approve', 'Approve')}
-              </Button>
-            </Group>
-          </Stack>
-        </Paper>
-      )}
 
       <Paper withBorder className={classes.composer}>
         <Textarea
           classNames={{ input: classes.inputArea }}
-          placeholder={t('assistant_input_placeholder', 'Ask about flights, dinner plans, or request ideas...')}
-          minRows={3}
+          placeholder={t('assistant_input_placeholder', 'Ask about timing, plans, or request an itinerary change...')}
+          minRows={2}
           autosize
           variant="unstyled"
           value={input}
           onChange={(event) => setInput(event.currentTarget.value)}
           onKeyDown={handleKeyDown}
-          disabled={isStreaming}
+          disabled={isStreaming || isApplying}
         />
         <Group justify="space-between" align="center" className={classes.composerFooter}>
           <Text size="xs" c="dimmed">
-            {t('assistant_input_hint', 'Press Enter to send, Shift+Enter for a new line.')}
+            {activeProposal
+              ? t('assistant_pending_warning_short', 'Review the pending proposal before sending another request.')
+              : t('assistant_input_hint', 'Enter sends. Shift+Enter adds a new line.')}
           </Text>
           <Button
             size="sm"
             leftSection={<IconSend size={16} />}
             onClick={handleSend}
-            disabled={!input.trim() || isStreaming}
+            disabled={!input.trim() || isStreaming || !!activeProposal || isApplying}
           >
             {t('assistant_send', 'Send')}
           </Button>
@@ -509,181 +453,232 @@ export const TripAssistant = ({ trip }: TripAssistantProps) => {
   );
 };
 
-const resolveAssistantError = (error: unknown, fallback: string) => {
-  if (!error) {
-    return fallback;
+const ProposalBullet = ({ proposal }: { proposal: AssistantProposal }) => {
+  if (proposal.status === 'approved') {
+    return <IconCheck size={13} />;
   }
+  if (proposal.status === 'rejected' || proposal.status === 'expired') {
+    return <IconX size={13} />;
+  }
+  if (proposal.status === 'failed') {
+    return <IconAlertCircle size={13} />;
+  }
+  return <IconRefresh size={13} />;
+};
 
+const ProposalCard = ({
+  proposal,
+  applying,
+  onApprove,
+  onReject,
+  onRetry,
+}: {
+  proposal: AssistantProposal;
+  applying: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+  onRetry: () => void;
+}) => {
+  const statusColor = proposal.status === 'failed' ? 'red' : proposal.status === 'approved' ? 'green' : proposal.status === 'pending' ? 'blue' : 'gray';
+  const preview = proposal.preview;
+  const previewChanges = preview?.changes || [];
+  const isPending = proposal.status === 'pending';
+
+  return (
+    <Paper withBorder className={classes.proposalCard}>
+      <Stack gap="sm">
+        <Group justify="space-between" align="flex-start">
+          <Stack gap={4}>
+            <Group gap="xs">
+              <Badge color={proposal.actionType === 'delete' ? 'red' : proposal.actionType === 'update' ? 'yellow' : 'green'} variant="light">
+                {proposal.actionType === 'batch' ? 'Batch' : labelize(proposal.actionType)}
+              </Badge>
+              <Badge color={statusColor} variant="dot">
+                {labelize(proposal.status)}
+              </Badge>
+            </Group>
+            <Text fw={700}>{preview?.title || proposal.summary}</Text>
+            {preview?.summary && (
+              <Text size="sm" c="dimmed">
+                {preview.summary}
+              </Text>
+            )}
+          </Stack>
+          {isPending && (
+            <Text size="xs" c="dimmed">
+              Expires {dayjs(proposal.expiresAt).format('MMM D, h:mm A')}
+            </Text>
+          )}
+        </Group>
+
+        <Stack gap="xs">
+          {previewChanges.map((change, index) => (
+            <PreviewChange key={`${proposal.id}-${index}`} change={change} />
+          ))}
+        </Stack>
+
+        {renderWarnings([...(preview?.assumptions || []), ...(preview?.warnings || [])])}
+        {proposal.sources && proposal.sources.length > 0 && renderSources(proposal.sources)}
+        {proposal.error && (
+          <Alert color="red" variant="light" icon={<IconAlertCircle size={14} />}>
+            {proposal.error}
+          </Alert>
+        )}
+
+        <Group justify="flex-end" className={classes.proposalActions}>
+          {isPending && (
+            <>
+              <Button variant="light" color="gray" onClick={onReject} disabled={applying}>
+                Reject
+              </Button>
+              <Button onClick={onApprove} loading={applying}>
+                Approve
+              </Button>
+            </>
+          )}
+          {proposal.status === 'failed' && (
+            <Button leftSection={<IconRefresh size={16} />} onClick={onRetry} loading={applying}>
+              Retry
+            </Button>
+          )}
+        </Group>
+      </Stack>
+    </Paper>
+  );
+};
+
+const PreviewChange = ({ change }: { change: AssistantProposalPreviewChange }) => {
+  return (
+    <Paper withBorder className={classes.previewChange}>
+      <Stack gap={6}>
+        <Group gap="xs">
+          <Badge size="sm" variant="light">
+            {labelize(change.operation)}
+          </Badge>
+          <Badge size="sm" variant="outline">
+            {labelize(change.entity_type)}
+          </Badge>
+          <Text fw={600} size="sm">
+            {change.title}
+          </Text>
+        </Group>
+        {change.operation === 'update' && change.diff && change.diff.length > 0 && (
+          <Stack gap={4}>
+            {change.diff.map((diff) => (
+              <Group key={diff.field} gap="xs" align="flex-start" className={classes.diffRow}>
+                <Text size="xs" fw={700} c="dimmed">
+                  {labelize(diff.field)}
+                </Text>
+                <Text size="xs" className={classes.diffValue}>
+                  {formatValue(diff.before)} {'->'} {formatValue(diff.after)}
+                </Text>
+              </Group>
+            ))}
+          </Stack>
+        )}
+        {change.operation !== 'update' && (
+          <Text size="sm" c={change.operation === 'delete' ? 'red' : undefined}>
+            {formatPreview(change.operation === 'delete' ? change.before : change.after)}
+          </Text>
+        )}
+      </Stack>
+    </Paper>
+  );
+};
+
+const renderMessage = (message: AssistantMessage, t: ReturnType<typeof useTranslation>['t']) => (
+  <Paper
+    className={`${classes.chatBubble} ${
+      message.role === 'assistant' ? classes.assistantBubble : classes.userBubble
+    }`}
+  >
+    <Text size="xs" fw={700} className={classes.messageMeta}>
+      {message.role === 'assistant' ? t('assistant_label', 'Assistant') : t('you', 'You')}
+    </Text>
+    <Box className={classes.messageBody} dangerouslySetInnerHTML={{ __html: sanitizeMarkdown(message.content) }} />
+    {message.metadata?.sources && message.metadata.sources.length > 0 && renderSources(message.metadata.sources)}
+  </Paper>
+);
+
+const renderSources = (sources: AssistantSource[]) => (
+  <Group gap={6} mt="xs">
+    {sources.map((source, index) => (
+      <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer" className={classes.sourceChip}>
+        <span className={classes.sourceIndex}>{index + 1}</span>
+        <span className={classes.sourceLabel}>{sourceLabel(source)}</span>
+        <IconExternalLink size={12} />
+      </a>
+    ))}
+  </Group>
+);
+
+const renderWarnings = (items: string[]) => {
+  const visible = items.filter(Boolean);
+  if (visible.length === 0) {
+    return null;
+  }
+  return (
+    <Stack gap={3}>
+      {visible.map((item) => (
+        <Text key={item} size="xs" c="dimmed">
+          {item}
+        </Text>
+      ))}
+    </Stack>
+  );
+};
+
+const resolveAssistantError = (error: unknown, fallback: string) => {
   if (typeof error === 'string') {
     return error;
   }
-
   if (error instanceof Error && error.message) {
     return error.message;
   }
-
   return fallback;
 };
 
-const sanitizeMarkdown = (text: string) => {
-  const html = markdownToHtml(text);
-  return DOMPurify.sanitize(html);
-};
+const sanitizeMarkdown = (text: string) => DOMPurify.sanitize(markdownToHtml(text));
 
 const markdownToHtml = (raw: string) => {
-  if (!raw || !raw.trim()) {
+  if (!raw.trim()) {
     return '';
   }
-
-  const normalized = raw.replace(/\r\n/g, '\n');
-  const lines = normalized.split('\n');
-  const htmlParts: string[] = [];
-  let listType: 'ul' | 'ol' | null = null;
-  let inCodeBlock = false;
-  let codeLanguage = '';
-  let codeLines: string[] = [];
-
-  const closeList = () => {
-    if (listType) {
-      htmlParts.push(`</${listType}>`);
-      listType = null;
-    }
-  };
-
-  const closeCodeBlock = () => {
-    if (!inCodeBlock) {
-      return;
-    }
-    const langAttr = codeLanguage ? ` class="language-${codeLanguage}"` : '';
-    htmlParts.push(`<pre><code${langAttr}>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
-    inCodeBlock = false;
-    codeLanguage = '';
-    codeLines = [];
-  };
-
-  for (const line of lines) {
-    const trimmedLine = line.trim();
-
-    if (trimmedLine.startsWith('```')) {
-      if (inCodeBlock) {
-        closeCodeBlock();
-      } else {
-        closeList();
-        inCodeBlock = true;
-        codeLanguage = trimmedLine.slice(3).trim();
-      }
-      continue;
-    }
-
-    if (inCodeBlock) {
-      codeLines.push(line);
-      continue;
-    }
-
-    if (trimmedLine === '') {
-      closeList();
-      htmlParts.push('<br />');
-      continue;
-    }
-
-    const headingMatch = trimmedLine.match(/^(#{1,6})\s+(.*)$/);
-    if (headingMatch) {
-      closeList();
-      const level = headingMatch[1].length;
-      htmlParts.push(`<h${level}>${applyInlineFormatting(headingMatch[2])}</h${level}>`);
-      continue;
-    }
-
-    if (/^[-*+]\s+/.test(trimmedLine)) {
-      if (listType !== 'ul') {
-        closeList();
-        listType = 'ul';
-        htmlParts.push('<ul>');
-      }
-      const itemText = trimmedLine.replace(/^[-*+]\s+/, '');
-      htmlParts.push(`<li>${applyInlineFormatting(itemText)}</li>`);
-      continue;
-    }
-
-    if (/^\d+\.\s+/.test(trimmedLine)) {
-      if (listType !== 'ol') {
-        closeList();
-        listType = 'ol';
-        htmlParts.push('<ol>');
-      }
-      const itemText = trimmedLine.replace(/^\d+\.\s+/, '');
-      htmlParts.push(`<li>${applyInlineFormatting(itemText)}</li>`);
-      continue;
-    }
-
-    if (/^>\s?/.test(trimmedLine)) {
-      closeList();
-      const quote = trimmedLine.replace(/^>\s?/, '');
-      htmlParts.push(`<blockquote>${applyInlineFormatting(quote)}</blockquote>`);
-      continue;
-    }
-
-    closeList();
-    htmlParts.push(`<p>${applyInlineFormatting(trimmedLine)}</p>`);
-  }
-
-  closeCodeBlock();
-  closeList();
-
-  return htmlParts.join('');
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .split(/\n{2,}/)
+    .map((block) => `<p>${block.replace(/\n/g, '<br />').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>')}</p>`)
+    .join('');
 };
 
-const escapeHtml = (value: string) => {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-};
-
-const applyInlineFormatting = (value: string) => {
-  let output = escapeHtml(value);
-  output = output.replace(/(\*\*|__)(.*?)\1/g, '<strong>$2</strong>');
-  output = output.replace(/(\*|_)(.*?)\1/g, '<em>$2</em>');
-  output = output.replace(/~~(.*?)~~/g, '<del>$1</del>');
-  output = output.replace(/`([^`]+)`/g, '<code>$1</code>');
-  output = output.replace(/\[([^\]]+)]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
-  return output;
-};
-
-const parseSSEPayloads = (buffer: string) => {
+const parseSSEPayloads = (buffer: string): { events: AssistantStreamEvent[]; remaining: string } => {
   const segments = buffer.split('\n\n');
   const remaining = segments.pop() ?? '';
-  const events: Array<Record<string, any>> = [];
-
+  const events: AssistantStreamEvent[] = [];
   segments.forEach((segment) => {
     const line = segment
       .split('\n')
-      .map((l) => l.trim())
-      .find((l) => l.startsWith('data:'));
+      .map((value) => value.trim())
+      .find((value) => value.startsWith('data:'));
     if (!line) {
       return;
     }
-    const payload = line.slice(5).trim();
-    if (!payload) {
-      return;
-    }
     try {
-      events.push(JSON.parse(payload));
+      events.push(JSON.parse(line.slice(5).trim()) as AssistantStreamEvent);
     } catch {
-      // Ignore malformed chunks
+      // Ignore partial or malformed stream chunks.
     }
   });
-
   return { events, remaining };
 };
 
 const buildAuthHeaders = (): HeadersInit => {
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-  };
-
-  const token = pb.authStore.token;
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
+  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  if (pb.authStore.token) {
+    headers.Authorization = `Bearer ${pb.authStore.token}`;
   }
-
   return headers;
 };
 
@@ -691,7 +686,6 @@ const sourceLabel = (source: AssistantSource) => {
   if (source.title) {
     return source.title;
   }
-
   try {
     return new URL(source.url).hostname.replace(/^www\./, '');
   } catch {
@@ -699,23 +693,24 @@ const sourceLabel = (source: AssistantSource) => {
   }
 };
 
-const renderProposalDetails = (proposal: AssistantProposal) => {
-  const entries = Object.entries(proposal.arguments || {});
-  if (entries.length === 0) {
-    return null;
+const labelize = (value: string) => value.replace(/_/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase());
+
+const formatValue = (value: unknown) => {
+  if (value === null || value === undefined || value === '') {
+    return 'None';
   }
-  return (
-    <Stack gap={4}>
-      {entries.map(([key, value]) => (
-        <Group key={key} gap="xs">
-          <Text size="sm" fw={600} c="dimmed" style={{ textTransform: 'capitalize' }}>
-            {key.replace(/_/g, ' ')}:
-          </Text>
-          <Text size="sm">
-            {typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value)}
-          </Text>
-        </Group>
-      ))}
-    </Stack>
-  );
+  if (typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
+};
+
+const formatPreview = (value?: Record<string, unknown>) => {
+  if (!value) {
+    return '';
+  }
+  return Object.entries(value)
+    .filter(([key, entry]) => key !== 'id' && entry !== null && entry !== undefined && entry !== '')
+    .map(([key, entry]) => `${labelize(key)}: ${formatValue(entry)}`)
+    .join(' | ');
 };

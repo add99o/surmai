@@ -20,6 +20,19 @@ COPY tsconfig.node.json .
 COPY vite.config.ts .
 RUN pnpm run build
 
+FROM --platform=$BUILDPLATFORM node:24 AS agent_runner
+
+WORKDIR /surmai/backend/agent-runner
+RUN corepack enable
+
+COPY backend/agent-runner/package.json .
+COPY backend/agent-runner/pnpm-lock.yaml .
+RUN pnpm install --frozen-lockfile
+
+COPY backend/agent-runner/tsconfig.json .
+COPY backend/agent-runner/src src
+RUN pnpm run build && pnpm prune --prod
+
 FROM --platform=$BUILDPLATFORM golang:1.26.2-alpine3.23 AS backend
 ARG TARGETOS
 ARG TARGETARCH
@@ -40,13 +53,14 @@ RUN tar -C /usr/local/bin -xzf /tmp/litestream.tar.gz
 
 FROM alpine:3.22
 
-RUN apk add --no-cache tzdata
+RUN apk add --no-cache tzdata nodejs
 
 COPY backend/init.sh /pb/init.sh
 COPY backend/litestream-init.sh /pb/litestream-init.sh
 COPY backend/datasets /datasets
 COPY --from=frontend /surmai/dist /pb_public
 COPY --from=backend /build/surmai-backend /pb/surmai-backend
+COPY --from=agent_runner /surmai/backend/agent-runner /pb/agent-runner
 COPY --from=litestream /usr/local/bin/litestream /usr/local/bin/litestream
 COPY litestream.yaml /etc/litestream.yml
 

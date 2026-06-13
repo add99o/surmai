@@ -2,6 +2,12 @@
   min-height: calc(100vh - 15rem);
 }
 
+.contextHeader {
+  padding: 1rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
 .headerBlock {
   flex-shrink: 0;
 }
@@ -137,6 +143,19 @@
   background-color: rgba(0, 0, 0, 0.16);
 }
 
+.timelineShell {
+  flex: 1;
+  min-height: 28rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background-color: rgba(0, 0, 0, 0.14);
+}
+
+.timelineViewport {
+  height: clamp(30rem, 58vh, 48rem);
+  padding: 1.25rem;
+}
+
 .chatViewport {
   height: clamp(28rem, 54vh, 44rem);
   overflow-y: auto;
@@ -145,7 +164,7 @@
 }
 
 .chatBubble {
-  border-radius: 10px;
+  border-radius: 8px;
   box-shadow: none;
   padding: 0.9rem 1rem;
 }
@@ -236,12 +255,37 @@
 
 .proposalCard {
   border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.previewChange {
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.diffRow {
+  display: grid;
+  grid-template-columns: minmax(6rem, 10rem) minmax(0, 1fr);
+}
+
+.diffValue {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 [data-mantine-color-scheme='light'] .proposalCard {
   background: rgba(255, 255, 255, 0.95);
   border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-mantine-color-scheme='light'] .contextHeader,
+[data-mantine-color-scheme='light'] .timelineShell,
+[data-mantine-color-scheme='light'] .previewChange {
+  background-color: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.06);
 }
 
 .proposalCountdown {
@@ -268,6 +312,11 @@
 
   .chatViewport {
     height: clamp(20rem, 50vh, 32rem);
+    padding: 0.9rem;
+  }
+
+  .timelineViewport {
+    height: clamp(22rem, 52vh, 34rem);
     padding: 0.9rem;
   }
 

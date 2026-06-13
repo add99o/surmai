@@ -72,7 +72,9 @@ func (surmai *SurmaiApp) BindRoutes() {
 		tripRoutes.GET("/assistant/messages", R.ListTripAssistantMessages)
 		tripRoutes.POST("/assistant/messages", R.CreateTripAssistantMessage)
 		tripRoutes.DELETE("/assistant/messages", R.ClearTripAssistantMessages)
+		tripRoutes.GET("/assistant/proposals", R.ListAssistantProposals)
 		tripRoutes.POST("/assistant/proposals/{proposalId}/decision", R.AssistantProposalDecision)
+		tripRoutes.POST("/assistant/proposals/{proposalId}/retry", R.RetryAssistantProposal)
 
 		// General Utility Routes
 		se.Router.GET("/api/surmai/flight-route/{flightNumber}",

@@ -5,6 +5,7 @@ import (
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
+	"github.com/pocketbase/pocketbase/core"
 )
 
 type CleanupExpiredContentJob struct {
@@ -45,4 +46,25 @@ func (job *CleanupExpiredContentJob) Execute() {
 		}
 		logger.Info("Deleted expired notifications", "count", len(expiredNotifications))
 	}
+
+	if err := expireTripAssistantProposals(app); err != nil {
+		logger.Error("Expire trip assistant proposals error", "error", err)
+	}
+}
+
+func expireTripAssistantProposals(app core.App) error {
+	records, err := app.FindAllRecords(
+		"trip_assistant_proposals",
+		dbx.NewExp("status = 'pending' and expiresAt < {:now}", dbx.Params{"now": time.Now().UTC().Format(time.RFC3339)}),
+	)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		record.Set("status", "expired")
+		if err := app.Save(record); err != nil {
+			return err
+		}
+	}
+	return nil
 }
