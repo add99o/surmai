@@ -808,6 +808,13 @@ func applyChangeFields(record *core.Record, change assistantChange, creating boo
 			continue
 		}
 		if pbField := proposalFieldToPocketBase(change.EntityType, field); pbField != "" {
+			if isAssistantTimeField(field) {
+				normalized, err := assistantTimeForStorage(stringValue(value))
+				if err != nil {
+					return err
+				}
+				value = normalized
+			}
 			record.Set(pbField, value)
 		}
 	}
@@ -1864,9 +1871,26 @@ func timeFieldsForEntity(entity string) (string, string) {
 
 func parseAssistantTime(value string) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, value); err == nil {
-		return t, nil
+		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, time.UTC), nil
 	}
 	return time.Parse("2006-01-02T15:04:05", value)
+}
+
+func assistantTimeForStorage(value string) (string, error) {
+	t, err := parseAssistantTime(value)
+	if err != nil {
+		return "", err
+	}
+	return t.Format("2006-01-02T15:04:05Z"), nil
+}
+
+func isAssistantTimeField(field string) bool {
+	switch field {
+	case "start_time", "end_time", "departure_time", "arrival_time":
+		return true
+	default:
+		return false
+	}
 }
 
 func proposalActionType(changes []assistantChange) string {

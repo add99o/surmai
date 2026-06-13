@@ -37,6 +37,26 @@ func TestValidateProposalArgumentsRejectsInvalidTimeRange(t *testing.T) {
 	}
 }
 
+func TestAssistantTimeForStoragePreservesOffsetWallClock(t *testing.T) {
+	stored, err := assistantTimeForStorage("2026-09-01T11:00:00-10:00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored != "2026-09-01T11:00:00Z" {
+		t.Fatalf("expected wall-clock fake UTC time, got %q", stored)
+	}
+}
+
+func TestParseAssistantTimeUsesWallClockForOffset(t *testing.T) {
+	parsed, err := parseAssistantTime("2026-09-01T11:00:00-10:00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Hour() != 11 || parsed.Location().String() != "UTC" {
+		t.Fatalf("expected 11:00 UTC wall-clock time, got %s", parsed)
+	}
+}
+
 func TestProposalActionTypeBatch(t *testing.T) {
 	action := proposalActionType([]assistantChange{
 		{Operation: "create", EntityType: "activity"},
