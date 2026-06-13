@@ -520,7 +520,7 @@ func TripAssistantStream(e *core.RequestEvent) error {
 		e.App.Logger().Error("TripAssistant stream failed", "error", err, "tripId", tripRecord.Id)
 		sendSSEEvent(writer, flusher, map[string]string{
 			"type":    "error",
-			"message": "assistant request failed",
+			"message": assistantClientError(err),
 		})
 	}
 
@@ -1241,6 +1241,10 @@ func runAssistantOnce(ctx context.Context, app core.App, trip *core.Record, user
 			sources = append(sources, event.Sources...)
 		case "proposal_interruption":
 			return "", nil, errors.New("proposal approval is only supported over the stream endpoint")
+		case "done":
+			if strings.TrimSpace(text.String()) == "" {
+				text.WriteString(finalOutputText(event.FinalOutput))
+			}
 		case "error":
 			return "", nil, errors.New(event.Message)
 		}
@@ -1287,6 +1291,13 @@ func streamAgentToClient(ctx context.Context, app core.App, writer http.Response
 			persisted = true
 		case "done":
 			if !persisted {
+				if strings.TrimSpace(assistantText.String()) == "" {
+					finalText := finalOutputText(event.FinalOutput)
+					if strings.TrimSpace(finalText) != "" {
+						assistantText.WriteString(finalText)
+						sendSSEEvent(writer, flusher, map[string]string{"type": "text_delta", "text": finalText})
+					}
+				}
 				metadata := map[string]interface{}{}
 				if len(sources) > 0 {
 					metadata["sources"] = sources
@@ -1313,6 +1324,43 @@ func streamAgentToClient(ctx context.Context, app core.App, writer http.Response
 		sendSSEEvent(writer, flusher, map[string]string{"type": "done"})
 	}
 	return nil
+}
+
+func finalOutputText(value interface{}) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case []interface{}:
+		var text strings.Builder
+		for _, entry := range typed {
+			text.WriteString(finalOutputText(entry))
+		}
+		return text.String()
+	case map[string]interface{}:
+		if content, ok := typed["content"]; ok {
+			return finalOutputText(content)
+		}
+		if text, ok := typed["text"]; ok {
+			return finalOutputText(text)
+		}
+		if output, ok := typed["output_text"]; ok {
+			return finalOutputText(output)
+		}
+	}
+	return ""
+}
+
+func assistantClientError(err error) string {
+	message := strings.TrimSpace(err.Error())
+	if message == "" {
+		return "assistant request failed"
+	}
+	message = strings.ReplaceAll(message, "\r", " ")
+	message = strings.ReplaceAll(message, "\n", " ")
+	if len(message) > 500 {
+		return message[:500] + "..."
+	}
+	return message
 }
 
 func invokeAgentRunner(ctx context.Context, app core.App, trip *core.Record, userID string, input agentRunnerInput) ([]agentRunnerEvent, error) {

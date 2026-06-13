@@ -88,7 +88,7 @@ function createAgent(model: string) {
     tools: [webSearchTool({ searchContextSize: 'medium' }), proposeItineraryChanges],
     modelSettings: {
       store: false,
-      reasoning: { effort: 'low' },
+      reasoning: { effort: 'none' },
       text: { verbosity: 'low' },
       toolChoice: 'auto',
     },
