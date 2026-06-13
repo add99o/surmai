@@ -159,6 +159,10 @@ function stringValue(value: unknown) {
   return typeof value === 'string' && value.trim() ? value.trim() : '';
 }
 
+function textDeltaValue(value: unknown) {
+  return typeof value === 'string' ? value : '';
+}
+
 function normalizeMessages(input: RunnerInput): string {
   const context = JSON.stringify(input.tripContext ?? {}, null, 2);
   const history = (input.messages ?? [])
@@ -200,7 +204,7 @@ async function runStream(input: RunnerInput) {
     if (isOpenAIResponsesRawModelStreamEvent(event)) {
       const rawType = event.data.event.type;
       if (rawType === 'response.output_text.delta') {
-        const delta = stringValue((event.data.event as { delta?: unknown }).delta);
+        const delta = textDeltaValue((event.data.event as { delta?: unknown }).delta);
         if (delta) {
           emit({ type: 'text_delta', text: delta });
         }
