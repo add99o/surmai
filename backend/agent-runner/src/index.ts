@@ -19,7 +19,42 @@ type Source = {
 
 const nullableString = z.string().nullable();
 const nullableNumber = z.number().nullable();
-const fieldValue = z.union([z.string(), z.number(), z.boolean(), z.null(), z.record(z.string(), z.unknown())]);
+
+const placeMetadata = z.object({
+  name: nullableString,
+  countryName: nullableString,
+  stateName: nullableString,
+  latitude: nullableString,
+  longitude: nullableString,
+  timezone: nullableString,
+  category: nullableString,
+  id: nullableString,
+});
+
+const providerMetadata = z.object({
+  name: nullableString,
+  iata: nullableString,
+  icao: nullableString,
+  id: nullableString,
+});
+
+const proposalMetadata = z.object({
+  place: placeMetadata.nullable(),
+  origin: placeMetadata.nullable(),
+  destination: placeMetadata.nullable(),
+  provider: z.union([nullableString, providerMetadata]),
+  rentalCompany: nullableString,
+  originAddress: nullableString,
+  destinationAddress: nullableString,
+  reservation: nullableString,
+  confirmationCode: nullableString,
+  flightNumber: nullableString,
+  seats: nullableString,
+  spotNumber: nullableString,
+  distance: nullableString,
+  elevationGain: nullableString,
+  notes: nullableString,
+});
 
 const proposalFieldSet = z.object({
   name: nullableString,
@@ -38,7 +73,7 @@ const proposalFieldSet = z.object({
   link: nullableString,
   cost_value: nullableNumber,
   cost_currency: nullableString,
-  metadata: z.record(z.string(), fieldValue).nullable(),
+  metadata: proposalMetadata.nullable(),
 });
 
 const itineraryChange = z.object({
