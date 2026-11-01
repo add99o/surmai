@@ -688,6 +688,7 @@ func RetryAssistantProposal(e *core.RequestEvent) error {
 }
 
 func approveAssistantProposal(ctx context.Context, app core.App, trip *core.Record, userID string, proposal *core.Record) (string, error) {
+	if isMCPProposal(proposal) { return approveMCPProposal(app, trip, userID, proposal) }
 	proposal.Set("status", "applying")
 	proposal.Set("error", "")
 	if err := app.Save(proposal); err != nil {

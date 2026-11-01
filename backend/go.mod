@@ -4,9 +4,11 @@ go 1.26.1
 
 require (
 	github.com/arran4/golang-ical v0.3.5
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/emersion/go-imap v1.2.1
 	github.com/emersion/go-message v0.18.2
 	github.com/joho/godotenv v1.5.1
+	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/openai/openai-go/v3 v3.50.0
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pocketbase/dbx v1.12.0
@@ -18,12 +20,18 @@ require (
 
 require (
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
+	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pocketbase/ozzo-validation/v4 v4.3.0 // indirect
 	github.com/ringsaturn/orb v0.15.0 // indirect
 	github.com/ringsaturn/tzf-dist v0.0.2026-c-fix1 // indirect
+	github.com/segmentio/asm v1.1.3 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
+	golang.org/x/time v0.15.0 // indirect
 )
 
 require (
