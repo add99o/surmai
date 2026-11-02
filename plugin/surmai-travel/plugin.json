@@ -1,12 +1,13 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "surmai-travel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Read your self-hosted Surmai trips, review recorded expenses, and prepare itinerary changes for approval in Surmai.",
-  "author": {"name": "Adnan Oudeh"},
+  "author": {"name": "Adnan Oudeh", "email": "adnanoudeh68@gmail.com"},
   "keywords": ["surmai", "travel", "itinerary", "expenses"],
   "extensions": {
     "com.openai": {
+      "apps": "./.app.json",
       "interface": {
         "displayName": "Surmai Travel",
         "shortDescription": "Your trips and itinerary",

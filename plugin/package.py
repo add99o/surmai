@@ -10,10 +10,10 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / "surmai-travel"
-OUTPUT = ROOT.parent / "dist" / "surmai-travel-0.1.0.zip"
+OUTPUT = ROOT.parent / "dist" / "surmai-travel-0.1.1.zip"
 
 def build():
-    for name in ("plugin", "mcp"):
+    for name in ("plugin",):
         data = json.loads((SOURCE / f"{name}.json").read_text(encoding="utf-8"))
         with urllib.request.urlopen(data["$schema"], timeout=20) as response:
             schema = json.load(response)
@@ -42,7 +42,7 @@ def build():
     with zipfile.ZipFile(OUTPUT) as archive:
         assert archive.testzip() is None
         assert set(archive.namelist()) == {p.relative_to(SOURCE.parent).as_posix() for p in files}
-        for name in ("plugin", "mcp"):
+        for name in ("plugin",):
             assert json.loads(archive.read(f"surmai-travel/{name}.json"))
     print(f"Validated {len(skills)} skills and {len(files)} files: {OUTPUT}")
 
