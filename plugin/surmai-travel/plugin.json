@@ -1,0 +1,28 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "surmai-travel",
+  "version": "0.1.1",
+  "description": "Read your self-hosted Surmai trips, review recorded expenses, and prepare itinerary changes for approval in Surmai.",
+  "author": {"name": "Adnan Oudeh", "email": "adnanoudeh68@gmail.com"},
+  "keywords": ["surmai", "travel", "itinerary", "expenses"],
+  "extensions": {
+    "com.openai": {
+      "apps": "./.app.json",
+      "interface": {
+        "displayName": "Surmai Travel",
+        "shortDescription": "Your trips and itinerary",
+        "longDescription": "Read trips, activities, lodging, transportation, expenses, and attachment metadata from your private Surmai instance. Prepare itinerary proposals with a preview and a link to approve them in Surmai. Access follows the linked Surmai user's permissions. Does not purchase travel, download attachment contents, or edit expenses.",
+        "developerName": "Adnan Oudeh",
+        "category": "Travel",
+        "capabilities": ["Read", "Write"],
+        "logo": "./assets/icon.png",
+        "composerIcon": "./assets/icon.png",
+        "defaultPrompt": [
+          "Show my Surmai trips and summarize the next itinerary.",
+          "Help me plan itinerary changes for review in Surmai.",
+          "Review the recorded expenses for one of my trips."
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+# Merge with the existing production compose project only after confirming the
+# service key below matches that project. This is not a standalone stack.
+services:
+  REPLACE_WITH_EXISTING_SERVICE_KEY:
+    image: ghcr.io/add99o/surmai@sha256:REPLACE_WITH_VERIFIED_DIGEST
+    environment:
+      SURMAI_MCP_ENABLED: "true"
+      SURMAI_MCP_PUBLIC_URL: "https://trip.oudeh.net/mcp"
+      SURMAI_MCP_AUTH0_ISSUER: "https://dev-4avss4sz4ka4rqo3.us.auth0.com/"
+      # Example only: supply the actual mapping privately in the deployment.
+      SURMAI_MCP_IDENTITY_MAP: '{"auth0|EXAMPLE_SUBJECT":"EXAMPLE_POCKETBASE_USER_ID"}'

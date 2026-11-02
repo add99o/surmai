@@ -26,6 +26,20 @@ type SurmaiApp struct {
 func (surmai *SurmaiApp) BindRoutes() {
 
 	surmai.Pb.OnServe().BindFunc(func(se *core.ServeEvent) error {
+		mcpConfig, err := R.MCPConfigFromEnv()
+		if err != nil {
+			return err
+		}
+		if mcpConfig != nil {
+			handler := R.NewMCPHandler(se.App, mcpConfig)
+			// Method-specific patterns coexist with the GET static-file catch-all.
+			for _, method := range []string{"GET", "POST", "DELETE", "OPTIONS"} {
+				se.Router.Route(method, "/mcp", func(e *core.RequestEvent) error { handler.ServeHTTP(e.Response, e.Request); return nil })
+			}
+			metadata := func(e *core.RequestEvent) error { return e.JSON(200, R.MCPResourceMetadata(mcpConfig)) }
+			se.Router.GET("/.well-known/oauth-protected-resource/mcp", metadata)
+			se.Router.GET("/.well-known/oauth-protected-resource", metadata)
+		}
 
 		se.Router.POST("/impersonate", R.ImpersonateAction).Bind(apis.RequireSuperuserAuth())
 
